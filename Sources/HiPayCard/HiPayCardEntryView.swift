@@ -23,51 +23,44 @@ public struct HiPayCardEntryView: View {
         self.theme = theme
     }
 
-    // Formatting happens in the binding setters (controller.update*) so the
-    // text is reformatted live on every keystroke.
-    private var holderBinding: Binding<String> {
-        Binding(get: { controller.holder }, set: { controller.updateHolder($0) })
-    }
-    private var numberBinding: Binding<String> {
-        Binding(get: { controller.cardNumber }, set: { controller.updateCardNumber($0) })
-    }
-    private var expiryBinding: Binding<String> {
-        Binding(get: { controller.expiry }, set: { controller.updateExpiry($0) })
-    }
-    private var cvcBinding: Binding<String> {
-        Binding(get: { controller.cvc }, set: { controller.updateCvc($0) })
-    }
-
+    // The TextFields bind the raw @Published values; formatting is re-applied
+    // from .onChange via the controller's *Edited() handlers — a write from
+    // the binding setter or a didSet only renders on focus loss (iOS 15/16).
     public var body: some View {
         VStack(spacing: 12) {
-            TextField("CARD HOLDER", text: holderBinding)
+            TextField("CARD HOLDER", text: $controller.holder)
                 .textInputAutocapitalization(.characters)
                 .autocorrectionDisabled()
                 .focused($focus, equals: .holder)
                 .modifier(EntryFieldStyle(valid: controller.isHolderAcceptable))
+                .onChange(of: controller.holder) { _ in
+                    controller.holderEdited()
+                }
 
-            TextField("Card number", text: numberBinding)
+            TextField("Card number", text: $controller.cardNumber)
                 .keyboardType(.numberPad)
                 .textContentType(.creditCardNumber)
                 .focused($focus, equals: .number)
                 .modifier(EntryFieldStyle(valid: controller.isNumberAcceptable))
                 .onChange(of: controller.cardNumber) { _ in
+                    controller.numberEdited()
                     if controller.isNumberComplete { focus = .expiry }
                 }
 
             HStack(spacing: 12) {
-                TextField("MM/YY", text: expiryBinding)
+                TextField("MM/YY", text: $controller.expiry)
                     .keyboardType(.numberPad)
                     .focused($focus, equals: .expiry)
                     .modifier(EntryFieldStyle(valid: controller.isExpiryAcceptable))
                     .onChange(of: controller.expiry) { _ in
+                        controller.expiryEdited()
                         guard controller.isExpiryComplete else { return }
                         focus = controller.isCvcRequired ? .cvc : nil
                     }
 
                 // CVV is NOT masked (user decision 2026-06-12) — short-lived,
                 // low-sensitivity input; visibility prevents typing errors.
-                TextField(controller.isCvcRequired ? "CVV" : "CVV (optional)", text: cvcBinding)
+                TextField(controller.isCvcRequired ? "CVV" : "CVV (optional)", text: $controller.cvc)
                     .keyboardType(.numberPad)
                     .autocorrectionDisabled()
                     .focused($focus, equals: .cvc)
@@ -75,6 +68,7 @@ public struct HiPayCardEntryView: View {
                     .opacity(controller.isCvcRequired ? 1 : 0.4)
                     .modifier(EntryFieldStyle(valid: controller.isCvcAcceptable))
                     .onChange(of: controller.cvc) { _ in
+                        controller.cvcEdited()
                         if controller.isCvcRequired && controller.isCvcComplete { focus = nil }
                     }
             }

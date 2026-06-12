@@ -7,10 +7,10 @@ import HiPayFullservice
 /// its own pay button — it never reads the PAN (PCI boundary, NFR2).
 ///
 /// All rules (network detection, formatting, completion, CVC policy,
-/// validation) come from the KMP layer — no logic in Swift (D1). Field
-/// updates go through the `update*` functions (the view binds to them) so
-/// formatting is applied synchronously WHILE TYPING — reassigning inside a
-/// `didSet` only renders after the field loses focus (SwiftUI quirk).
+/// validation) come from the KMP layer — no logic in Swift (D1). The view
+/// binds the raw field values and re-applies formatting from `.onChange`
+/// via the `*Edited()` handlers (see their comment for the SwiftUI
+/// rendering constraint).
 ///
 /// v1 accepted limit (documented threat model): the controller lives in the
 /// host process memory; binary isolation of the card path is the post-v1
@@ -19,10 +19,14 @@ import HiPayFullservice
 public final class HiPayCardEntryController: ObservableObject {
 
     // Field state is internal: visible to the entry view, opaque to the host.
-    @Published private(set) var holder: String = ""
-    @Published private(set) var cardNumber: String = ""
-    @Published private(set) var expiry: String = ""
-    @Published private(set) var cvc: String = ""
+    // Settable by the view's TextFields (same module); reformatted in the
+    // *Edited() handlers below.
+    @Published var holder: String = ""
+    @Published var cardNumber: String = ""
+    @Published var expiry: String = ""
+    @Published var cvc: String = ""
+
+    private var previousExpiry: String = ""
 
     private let configuration: HiPayConfiguration
 
@@ -30,30 +34,48 @@ public final class HiPayCardEntryController: ObservableObject {
         self.configuration = configuration
     }
 
-    // MARK: - Field updates (live formatting, called by the view's bindings)
+    // MARK: - Field updates (live formatting, called from the view's onChange)
+    // A TextField only re-renders a transformed value when the write happens
+    // OUTSIDE its own edit transaction: writing from the binding setter or a
+    // didSet renders on focus loss only (iOS 15/16). The view therefore binds
+    // the raw @Published value and calls these handlers from .onChange — the
+    // second assignment here is what reformats live. The `!=` guards
+    // terminate the onChange -> write -> onChange recursion.
 
-    /// Holder name, forced to upper case.
-    func updateHolder(_ raw: String) {
-        holder = raw.uppercased()
+    /// Holder name, forced to upper case (max 60 chars, FR11).
+    func holderEdited() {
+        let formatted = String(holder.uppercased().prefix(60))
+        if formatted != holder { holder = formatted }
     }
 
     /// Card number, auto-formatted per detected network while typing
     /// (Amex 4-6-5, others groups of 4 — KMP rules).
-    func updateCardNumber(_ raw: String) {
-        cardNumber = CardNetworks.shared.format(number: raw)
+    func numberEdited() {
+        let formatted = CardNetworks.shared.format(number: cardNumber)
+        if formatted != cardNumber { cardNumber = formatted }
     }
 
-    /// Expiry as "MM/YY" with automatic slash insertion while typing.
-    func updateExpiry(_ raw: String) {
-        let digits = String(raw.filter(\.isNumber).prefix(4))
-        expiry = digits.count > 2
-            ? "\(digits.prefix(2))/\(digits.dropFirst(2))"
-            : digits
+    /// Expiry as "MM/YY": the slash is appended as soon as the month's 2
+    /// digits are typed — but not while deleting, so backspace can cross it.
+    func expiryEdited() {
+        let digits = String(expiry.filter(\.isNumber).prefix(4))
+        let isDeleting = expiry.count < previousExpiry.count
+        let formatted: String
+        if digits.count >= 3 {
+            formatted = "\(digits.prefix(2))/\(digits.dropFirst(2))"
+        } else if digits.count == 2 && !isDeleting {
+            formatted = digits + "/"
+        } else {
+            formatted = digits
+        }
+        previousExpiry = formatted
+        if formatted != expiry { expiry = formatted }
     }
 
     /// CVC, capped to the network's length (4 for Amex, 3 otherwise).
-    func updateCvc(_ raw: String) {
-        cvc = String(raw.filter(\.isNumber).prefix(cvcMaxLength))
+    func cvcEdited() {
+        let formatted = String(cvc.filter(\.isNumber).prefix(cvcMaxLength))
+        if formatted != cvc { cvc = formatted }
     }
 
     // MARK: - Network-driven rules (KMP)
