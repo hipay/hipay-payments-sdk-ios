@@ -5,9 +5,11 @@ import SwiftUI
 /// `HiPayCardEntryController` exposes only `tokenize()` -> token and
 /// `canTokenize` for the host's pay button).
 ///
-/// Layout: holder (upper-cased) on top, auto-formatted card number in the
-/// middle, expiry MM/YY bottom-left, CVV bottom-right (shown disabled when
-/// the network does not require it). Completed fields auto-advance focus.
+/// Layout: holder (upper-cased) on top, card number auto-formatted WHILE
+/// TYPING in the middle, expiry MM/YY bottom-left, CVV bottom-right (visible
+/// in clear, shown disabled when the network does not require it). Completed
+/// fields auto-advance focus; a complete MM/YY focuses the CVV when required,
+/// otherwise dismisses the keyboard.
 public struct HiPayCardEntryView: View {
 
     @ObservedObject private var controller: HiPayCardEntryController
@@ -21,15 +23,30 @@ public struct HiPayCardEntryView: View {
         self.theme = theme
     }
 
+    // Formatting happens in the binding setters (controller.update*) so the
+    // text is reformatted live on every keystroke.
+    private var holderBinding: Binding<String> {
+        Binding(get: { controller.holder }, set: { controller.updateHolder($0) })
+    }
+    private var numberBinding: Binding<String> {
+        Binding(get: { controller.cardNumber }, set: { controller.updateCardNumber($0) })
+    }
+    private var expiryBinding: Binding<String> {
+        Binding(get: { controller.expiry }, set: { controller.updateExpiry($0) })
+    }
+    private var cvcBinding: Binding<String> {
+        Binding(get: { controller.cvc }, set: { controller.updateCvc($0) })
+    }
+
     public var body: some View {
         VStack(spacing: 12) {
-            TextField("CARD HOLDER", text: $controller.holder)
+            TextField("CARD HOLDER", text: holderBinding)
                 .textInputAutocapitalization(.characters)
                 .autocorrectionDisabled()
                 .focused($focus, equals: .holder)
                 .modifier(EntryFieldStyle(valid: controller.isHolderAcceptable))
 
-            TextField("Card number", text: $controller.cardNumber)
+            TextField("Card number", text: numberBinding)
                 .keyboardType(.numberPad)
                 .textContentType(.creditCardNumber)
                 .focused($focus, equals: .number)
@@ -39,18 +56,20 @@ public struct HiPayCardEntryView: View {
                 }
 
             HStack(spacing: 12) {
-                TextField("MM/YY", text: $controller.expiry)
+                TextField("MM/YY", text: expiryBinding)
                     .keyboardType(.numberPad)
                     .focused($focus, equals: .expiry)
                     .modifier(EntryFieldStyle(valid: controller.isExpiryAcceptable))
                     .onChange(of: controller.expiry) { _ in
-                        if controller.isExpiryComplete {
-                            focus = controller.isCvcRequired ? .cvc : nil
-                        }
+                        guard controller.isExpiryComplete else { return }
+                        focus = controller.isCvcRequired ? .cvc : nil
                     }
 
-                SecureField(controller.isCvcRequired ? "CVV" : "CVV (optional)", text: $controller.cvc)
+                // CVV is NOT masked (user decision 2026-06-12) — short-lived,
+                // low-sensitivity input; visibility prevents typing errors.
+                TextField(controller.isCvcRequired ? "CVV" : "CVV (optional)", text: cvcBinding)
                     .keyboardType(.numberPad)
+                    .autocorrectionDisabled()
                     .focused($focus, equals: .cvc)
                     .disabled(!controller.isCvcRequired)
                     .opacity(controller.isCvcRequired ? 1 : 0.4)
