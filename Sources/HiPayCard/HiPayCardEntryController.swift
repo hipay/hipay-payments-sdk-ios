@@ -45,6 +45,9 @@ public final class HiPayCardEntryController: ObservableObject {
     private lazy var tokenizer = CardTokenizer(config: configuration.kmpConfig)
     // BIN already resolved against the backend — avoids re-querying per keystroke.
     private var lastResolvedDigits: String?
+    // True only after an explicit user tap — so a backend refinement keeps the
+    // user's co-brand choice but otherwise re-defaults to the domestic network.
+    private var userDidSelect = false
 
     public init(configuration: HiPayConfiguration) {
         self.configuration = configuration
@@ -53,7 +56,10 @@ public final class HiPayCardEntryController: ObservableObject {
     /// The host picks one of `networks` (co-branding choice). Ignored if the
     /// network is not among the currently offered ones.
     public func selectNetwork(_ network: HiPayCardNetwork) {
-        if networks.contains(network) { selectedNetwork = network }
+        if networks.contains(network) {
+            selectedNetwork = network
+            userDidSelect = true
+        }
     }
 
     // MARK: - Field updates (live formatting, called from the view's onChange)
@@ -107,12 +113,16 @@ public final class HiPayCardEntryController: ObservableObject {
         // meanwhile.
         guard CardValidators.shared.isCardNumberValid(number: digits) else {
             lastResolvedDigits = nil
+            userDidSelect = false
             setNetworks(local.map { [$0] } ?? [])
             return
         }
-        if networks.isEmpty, let local { setNetworks([local]) } // hold local until backend answers
         guard digits != lastResolvedDigits else { return }
         lastResolvedDigits = digits
+        // New card: drop any prior manual choice and show its local icon
+        // immediately (clears a stale co-brand from the previous number).
+        userDidSelect = false
+        setNetworks(local.map { [$0] } ?? [])
         Task { await resolveNetworks(for: digits) }
     }
 
@@ -126,13 +136,17 @@ public final class HiPayCardEntryController: ObservableObject {
             let resolved = info.resolvedNetworks().compactMap { HiPayCardNetwork($0) }
             if !resolved.isEmpty { setNetworks(resolved) }
         } catch {
-            // resolution failed (offline, rejected): keep the local single icon
+            // Resolution failed (offline, rejected): keep the local single icon
+            // and allow a retry of the same number on the next edit.
+            if digits == panDigits { lastResolvedDigits = nil }
         }
     }
 
     private func setNetworks(_ list: [HiPayCardNetwork]) {
         networks = list
-        if let sel = selectedNetwork, list.contains(sel) { return } // keep a still-valid choice
+        // Keep an EXPLICIT user choice if still offered; otherwise default to
+        // the first (the domestic co-brand on a backend refinement — e.g. CB).
+        if userDidSelect, let sel = selectedNetwork, list.contains(sel) { return }
         selectedNetwork = list.first
     }
 
@@ -217,6 +231,7 @@ public final class HiPayCardEntryController: ObservableObject {
             networks = []
             selectedNetwork = nil
             lastResolvedDigits = nil
+            userDidSelect = false
             return HiPayCardToken(kmpToken)
         } catch {
             throw HiPayError.from(error)
