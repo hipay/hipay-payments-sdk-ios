@@ -22,7 +22,10 @@ let package = Package(
         ),
         .target(
             name: "HiPayCard",
-            dependencies: ["HiPayCore"]
+            dependencies: ["HiPayCore"],
+            // Card-network brand icons (neutral + Visa/MC/Amex/Maestro/BCMC/CB),
+            // loaded via Image(_:bundle: .module).
+            resources: [.process("Resources")]
         ),
     ]
 )

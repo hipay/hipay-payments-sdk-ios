@@ -43,6 +43,9 @@ public struct HiPayCardEntryView: View {
                 .autocorrectionDisabled()
                 .focused($focus, equals: .number)
                 .modifier(EntryFieldStyle(valid: controller.isNumberAcceptable))
+                // Network icon(s) on the right: neutral by default, the detected
+                // brand once known, both + a highlighted default in co-branding.
+                .overlay(alignment: .trailing) { networkIcons.padding(.trailing, 12) }
                 .onChange(of: controller.cardNumber) { _ in
                     controller.numberEdited()
                     if controller.isNumberComplete { focus = .expiry }
@@ -75,6 +78,44 @@ public struct HiPayCardEntryView: View {
                     }
             }
         }
+    }
+
+    // Right-aligned network icons. Neutral placeholder when nothing is
+    // detected; the detected brand once known; in co-branding both are shown,
+    // the selected/default one highlighted (full opacity + outline) and the
+    // other dimmed — tap to switch (FR: user picks the co-brand network).
+    @ViewBuilder private var networkIcons: some View {
+        HStack(spacing: 6) {
+            if controller.networks.isEmpty {
+                brandChip(assetName: "HPCardNeutral", highlighted: false, dimmed: true)
+            } else {
+                ForEach(controller.networks, id: \.self) { net in
+                    let isSelected = controller.selectedNetwork == net
+                    brandChip(assetName: net.assetName, highlighted: isSelected, dimmed: !isSelected)
+                        .contentShape(Rectangle())
+                        .onTapGesture { controller.selectNetwork(net) }
+                        .accessibilityLabel(Text(net.rawValue))
+                        .accessibilityAddTraits(isSelected ? .isSelected : [])
+                }
+            }
+        }
+    }
+
+    // A brand logo inside a credit-card-shaped chip (~1.6:1) with left/right
+    // padding around the logo. Outlined when highlighted — including the lone
+    // detected network, not only the co-brand selection.
+    private func brandChip(assetName: String, highlighted: Bool, dimmed: Bool) -> some View {
+        Image(assetName, bundle: .module)
+            .resizable()
+            .scaledToFit()
+            .padding(.horizontal, 5)
+            .padding(.vertical, 3)
+            .frame(width: 33, height: 21) // credit-card aspect ratio (~1.586:1)
+            .opacity(dimmed ? 0.35 : 1)
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(Color.accentColor, lineWidth: highlighted ? 1.5 : 0),
+            )
     }
 }
 

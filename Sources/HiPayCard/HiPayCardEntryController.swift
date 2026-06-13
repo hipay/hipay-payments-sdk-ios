@@ -31,10 +31,29 @@ public final class HiPayCardEntryController: ObservableObject {
     // CVV that no longer fits when the network changes.
     private var previousCvcContext: (length: Int, required: Bool)?
 
+    // MARK: - Network resolution (icons / co-branding)
+
+    /// Networks to display, default-selected first. Backend-resolved (incl.
+    /// co-brand CB/BCMC) once the number is valid; before that, the locally
+    /// BIN-detected single network — empty shows the neutral icon.
+    @Published public private(set) var networks: [HiPayCardNetwork] = []
+    /// The network the order should use (`payment_product`). Defaults to the
+    /// co-brand when present; the user may change it via `selectNetwork`.
+    @Published public private(set) var selectedNetwork: HiPayCardNetwork?
+
     private let configuration: HiPayConfiguration
+    private lazy var tokenizer = CardTokenizer(config: configuration.kmpConfig)
+    // BIN already resolved against the backend — avoids re-querying per keystroke.
+    private var lastResolvedDigits: String?
 
     public init(configuration: HiPayConfiguration) {
         self.configuration = configuration
+    }
+
+    /// The host picks one of `networks` (co-branding choice). Ignored if the
+    /// network is not among the currently offered ones.
+    public func selectNetwork(_ network: HiPayCardNetwork) {
+        if networks.contains(network) { selectedNetwork = network }
     }
 
     // MARK: - Field updates (live formatting, called from the view's onChange)
@@ -69,6 +88,52 @@ public final class HiPayCardEntryController: ObservableObject {
             cvc = ""
         }
         previousCvcContext = context
+
+        refreshNetworks()
+    }
+
+    // MARK: - Network resolution
+
+    /// Local BIN detection drives an immediate single icon; once the number is
+    /// complete and valid, the backend refines it (adds the CB/BCMC co-brand).
+    private func refreshNetworks() {
+        let digits = panDigits
+        let local = HiPayCardNetwork(CardNetworks.shared.detect(number: digits))
+
+        // Resolve once the number is Luhn-valid (12-19) — NOT on the
+        // network-specific completion length: a real 16-digit BCMC card is
+        // valid before our 17-digit "complete" heuristic, and the legacy
+        // likewise triggers on validity. Local detection drives the icon
+        // meanwhile.
+        guard CardValidators.shared.isCardNumberValid(number: digits) else {
+            lastResolvedDigits = nil
+            setNetworks(local.map { [$0] } ?? [])
+            return
+        }
+        if networks.isEmpty, let local { setNetworks([local]) } // hold local until backend answers
+        guard digits != lastResolvedDigits else { return }
+        lastResolvedDigits = digits
+        Task { await resolveNetworks(for: digits) }
+    }
+
+    private func resolveNetworks(for digits: String) async {
+        let year = String((Calendar.current.component(.year, from: Date())) + 1)
+        do {
+            let info = try await tokenizer.resolveCardInfo(
+                cardNumber: digits, expiryMonth: "12", expiryYear: year
+            )
+            guard digits == panDigits else { return } // user kept typing
+            let resolved = info.resolvedNetworks().compactMap { HiPayCardNetwork($0) }
+            if !resolved.isEmpty { setNetworks(resolved) }
+        } catch {
+            // resolution failed (offline, rejected): keep the local single icon
+        }
+    }
+
+    private func setNetworks(_ list: [HiPayCardNetwork]) {
+        networks = list
+        if let sel = selectedNetwork, list.contains(sel) { return } // keep a still-valid choice
+        selectedNetwork = list.first
     }
 
     /// Expiry as "MM/YY": the slash is appended as soon as the month's 2
@@ -138,7 +203,6 @@ public final class HiPayCardEntryController: ObservableObject {
     /// PAN and CVC fields are cleared (the component no longer needs them)
     /// and the host receives only the token.
     public func tokenize(multiUse: Bool = false) async throws -> HiPayCardToken {
-        let tokenizer = CardTokenizer(config: configuration.kmpConfig)
         do {
             let kmpToken = try await tokenizer.generateToken(
                 cardNumber: panDigits,
@@ -150,6 +214,9 @@ public final class HiPayCardEntryController: ObservableObject {
             )
             cardNumber = ""
             cvc = ""
+            networks = []
+            selectedNetwork = nil
+            lastResolvedDigits = nil
             return HiPayCardToken(kmpToken)
         } catch {
             throw HiPayError.from(error)

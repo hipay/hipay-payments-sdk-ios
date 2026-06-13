@@ -26,6 +26,7 @@ public final class HiPayPayment {
         description: String,
         language: String = "en_GB",
         cardToken: String,
+        paymentProduct: String = "visa",
         redirectScheme: String,
         authenticationIndicator: Int = 0,
         signature: String? = nil
@@ -33,7 +34,7 @@ public final class HiPayPayment {
         let base = "\(redirectScheme)://hipay-fullservice/gateway/orders/\(orderId)"
         let order = OrderRequest(
             orderId: orderId,
-            paymentProduct: "visa",
+            paymentProduct: paymentProduct,
             amount: amount,
             description: description,
             acceptUrl: "\(base)/accept",
