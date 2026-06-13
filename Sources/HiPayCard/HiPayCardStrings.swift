@@ -22,11 +22,15 @@ public enum HiPayCardStrings {
     /// Localized text for a shared card-entry key.
     public static func localized(_ key: CardEntryStringKey) -> String {
         let name = key.name
-        if let override = localeOverride,
-           let code = override.languageCode,
-           let path = Bundle.module.path(forResource: code, ofType: "lproj"),
-           let bundle = Bundle(path: path) {
-            return bundle.localizedString(forKey: name, value: name, table: nil)
+        if let override = localeOverride, let code = override.languageCode {
+            // Forced language: resolve from its catalog; if that language has no
+            // catalog, fall back to the EN baseline — never silently to the
+            // device locale (review P3, matches `defaultLocalization`).
+            let lproj = Bundle.module.path(forResource: code, ofType: "lproj")
+                ?? Bundle.module.path(forResource: "en", ofType: "lproj")
+            if let path = lproj, let bundle = Bundle(path: path) {
+                return bundle.localizedString(forKey: name, value: name, table: nil)
+            }
         }
         return Bundle.module.localizedString(forKey: name, value: name, table: nil)
     }
