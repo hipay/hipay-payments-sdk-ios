@@ -204,8 +204,8 @@ public final class HiPayCardEntryController: ObservableObject {
     }
 
     /// True when every required field is filled and valid — drive the host's
-    /// pay button with this (`.disabled(!controller.canTokenize)`).
-    public var canTokenize: Bool {
+    /// pay button with this (`.disabled(!controller.canPay)`).
+    public var canPay: Bool {
         !holder.isEmpty
             && CardValidators.shared.isCardNumberValid(number: panDigits)
             && isExpiryComplete
@@ -213,10 +213,48 @@ public final class HiPayCardEntryController: ObservableObject {
             && isCvcComplete
     }
 
-    /// Tokenizes the entered card against HiPay Secure Vault. On success the
-    /// PAN and CVC fields are cleared (the component no longer needs them)
-    /// and the host receives only the token.
-    public func tokenize(multiUse: Bool = false) async throws -> HiPayCardToken {
+    /// Tokenizes the entered card, creates the order, and returns the
+    /// transaction — the card token is created and consumed ENTIRELY inside the
+    /// SDK and never crosses to the host (the host only ever sees the
+    /// `HiPayTransaction`). The PAN/CVC are cleared once tokenized.
+    ///
+    /// On a 3DS challenge the returned transaction is `.forwarding`: open its
+    /// `forwardUrl`, then confirm via `HiPayPayment.getTransaction(reference:)`
+    /// on the return deep link (the token is not needed past this point).
+    ///
+    /// The `signature` is the HS signature of orderId+amount+currency, computed
+    /// by your backend — the SDK never computes it.
+    public func pay(
+        orderId: String,
+        amount: String,
+        currency: String = "EUR",
+        description: String,
+        language: String = "en_GB",
+        redirectScheme: String,
+        authenticationIndicator: Int = 0,
+        signature: String? = nil
+    ) async throws -> HiPayTransaction {
+        // Capture the chosen network BEFORE tokenize() clears the component state.
+        let paymentProduct = selectedNetwork?.paymentProductCode ?? "visa"
+        let token = try await tokenize()
+        let payment = HiPayPayment(configuration: configuration)
+        return try await payment.requestCardOrder(
+            orderId: orderId,
+            amount: amount,
+            currency: currency,
+            description: description,
+            language: language,
+            cardToken: token.token,
+            paymentProduct: paymentProduct,
+            redirectScheme: redirectScheme,
+            authenticationIndicator: authenticationIndicator,
+            signature: signature
+        )
+    }
+
+    /// Tokenizes against HiPay Secure Vault. Internal: the token never leaves
+    /// the SDK — `pay()` consumes it directly. PAN/CVC are cleared on success.
+    func tokenize(multiUse: Bool = false) async throws -> HiPayCardToken {
         do {
             let kmpToken = try await tokenizer.generateToken(
                 cardNumber: panDigits,
