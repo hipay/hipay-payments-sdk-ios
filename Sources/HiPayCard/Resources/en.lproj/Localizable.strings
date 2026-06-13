@@ -1,0 +1,24 @@
+/* HiPayCard — English (baseline). Keys == CardEntryStringKey enum constants (story 5.1).
+   Parity with FR/IT enforced by scripts/check-i18n-parity.sh (story 5.2). */
+
+"LABEL_HOLDER" = "Cardholder name";
+"LABEL_NUMBER" = "Card number";
+"LABEL_EXPIRY" = "Expiry date";
+"LABEL_CVV" = "Security code";
+
+"PLACEHOLDER_HOLDER" = "Name on card";
+"PLACEHOLDER_NUMBER" = "1234 5678 9012 3456";
+"PLACEHOLDER_EXPIRY" = "MM/YY";
+"PLACEHOLDER_CVV" = "CVV";
+
+"CVV_OPTIONAL" = "Optional";
+"CVV_TOOLTIP" = "The 3- or 4-digit security code on the back of your card (front for Amex).";
+
+"ERROR_INVALID_NUMBER" = "Invalid card number";
+"ERROR_INCOMPLETE_NUMBER" = "Card number is incomplete";
+"ERROR_INVALID_EXPIRY" = "Invalid expiry date";
+"ERROR_EXPIRED" = "This card has expired";
+"ERROR_INVALID_CVV" = "Invalid security code";
+"ERROR_INCOMPLETE_CVV" = "Security code is incomplete";
+"ERROR_HOLDER_TOO_LONG" = "Cardholder name is too long";
+"ERROR_NETWORK_NOT_AUTHORIZED" = "This card network is not accepted";

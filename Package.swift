@@ -3,6 +3,9 @@ import PackageDescription
 
 let package = Package(
     name: "HiPayFullserviceKMP",
+    // Required for the HiPayCard localized .strings catalogs (story 5.2);
+    // a device locale with no catalog falls back to EN.
+    defaultLocalization: "en",
     platforms: [.iOS(.v15)],
     products: [
         // Headless SDK: payment orchestration, no UI.

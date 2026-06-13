@@ -1,0 +1,24 @@
+/* HiPayCard — Français. Clés == constantes CardEntryStringKey (story 5.1).
+   Parité avec EN/IT vérifiée par scripts/check-i18n-parity.sh (story 5.2). */
+
+"LABEL_HOLDER" = "Nom du titulaire";
+"LABEL_NUMBER" = "Numéro de carte";
+"LABEL_EXPIRY" = "Date d'expiration";
+"LABEL_CVV" = "Code de sécurité";
+
+"PLACEHOLDER_HOLDER" = "Nom sur la carte";
+"PLACEHOLDER_NUMBER" = "1234 5678 9012 3456";
+"PLACEHOLDER_EXPIRY" = "MM/AA";
+"PLACEHOLDER_CVV" = "CVV";
+
+"CVV_OPTIONAL" = "Facultatif";
+"CVV_TOOLTIP" = "Le code de sécurité à 3 ou 4 chiffres au dos de votre carte (au recto pour Amex).";
+
+"ERROR_INVALID_NUMBER" = "Numéro de carte invalide";
+"ERROR_INCOMPLETE_NUMBER" = "Numéro de carte incomplet";
+"ERROR_INVALID_EXPIRY" = "Date d'expiration invalide";
+"ERROR_EXPIRED" = "Cette carte a expiré";
+"ERROR_INVALID_CVV" = "Code de sécurité invalide";
+"ERROR_INCOMPLETE_CVV" = "Code de sécurité incomplet";
+"ERROR_HOLDER_TOO_LONG" = "Nom du titulaire trop long";
+"ERROR_NETWORK_NOT_AUTHORIZED" = "Ce réseau de carte n'est pas accepté";
