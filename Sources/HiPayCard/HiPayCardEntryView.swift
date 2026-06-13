@@ -40,6 +40,7 @@ public struct HiPayCardEntryView: View {
             TextField("Card number", text: $controller.cardNumber)
                 .keyboardType(.numberPad)
                 .textContentType(.creditCardNumber)
+                .autocorrectionDisabled()
                 .focused($focus, equals: .number)
                 .modifier(EntryFieldStyle(valid: controller.isNumberAcceptable))
                 .onChange(of: controller.cardNumber) { _ in
@@ -50,6 +51,7 @@ public struct HiPayCardEntryView: View {
             HStack(spacing: 12) {
                 TextField("MM/YY", text: $controller.expiry)
                     .keyboardType(.numberPad)
+                    .autocorrectionDisabled()
                     .focused($focus, equals: .expiry)
                     .modifier(EntryFieldStyle(valid: controller.isExpiryAcceptable))
                     .onChange(of: controller.expiry) { _ in

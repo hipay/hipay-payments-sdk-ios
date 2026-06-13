@@ -27,6 +27,9 @@ public final class HiPayCardEntryController: ObservableObject {
     @Published var cvc: String = ""
 
     private var previousExpiry: String = ""
+    // CVC length + requirement of the last detected network — used to clear a
+    // CVV that no longer fits when the network changes.
+    private var previousCvcContext: (length: Int, required: Bool)?
 
     private let configuration: HiPayConfiguration
 
@@ -51,8 +54,21 @@ public final class HiPayCardEntryController: ObservableObject {
     /// Card number, auto-formatted per detected network while typing
     /// (Amex 4-6-5, others groups of 4 — KMP rules).
     func numberEdited() {
-        let formatted = CardNetworks.shared.format(number: cardNumber)
+        // Explicit 19-digit cap (max PAN length) — don't rely on format()'s
+        // group template as the de-facto length limit.
+        let capped = String(cardNumber.filter(\.isNumber).prefix(19))
+        let formatted = CardNetworks.shared.format(number: capped)
         if formatted != cardNumber { cardNumber = formatted }
+
+        // A CVV is network-specific: when the detected network's CVC rule
+        // changes (e.g. Amex 4-digit -> another network's 3-digit, or
+        // required <-> not required), a CVV typed for the previous network no
+        // longer fits — clear it rather than carry a stale/wrong-length value.
+        let context = (length: cvcMaxLength, required: isCvcRequired)
+        if let previous = previousCvcContext, previous != context, !cvc.isEmpty {
+            cvc = ""
+        }
+        previousCvcContext = context
     }
 
     /// Expiry as "MM/YY": the slash is appended as soon as the month's 2
