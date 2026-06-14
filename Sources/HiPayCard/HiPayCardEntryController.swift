@@ -354,7 +354,9 @@ public final class HiPayCardEntryController: ObservableObject {
         language: String = "en_GB",
         redirectScheme: String,
         authenticationIndicator: Int = 0,
-        signature: String? = nil
+        signature: String? = nil,
+        customer: HiPayCustomerInfo? = nil,
+        shipping: HiPayCustomerInfo? = nil
     ) async throws -> HiPayTransaction {
         // Capture the chosen network BEFORE tokenize() clears the component state.
         let paymentProduct = selectedNetwork?.paymentProductCode ?? "visa"
@@ -370,7 +372,9 @@ public final class HiPayCardEntryController: ObservableObject {
             paymentProduct: paymentProduct,
             redirectScheme: redirectScheme,
             authenticationIndicator: authenticationIndicator,
-            signature: signature
+            signature: signature,
+            customer: customer,
+            shipping: shipping
         )
     }
 

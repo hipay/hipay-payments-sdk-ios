@@ -29,7 +29,9 @@ public final class HiPayPayment {
         paymentProduct: String = "visa",
         redirectScheme: String,
         authenticationIndicator: Int = 0,
-        signature: String? = nil
+        signature: String? = nil,
+        customer: HiPayCustomerInfo? = nil,
+        shipping: HiPayCustomerInfo? = nil
     ) async throws -> HiPayTransaction {
         let base = "\(redirectScheme)://hipay-fullservice/gateway/orders/\(orderId)"
         let order = OrderRequest(
@@ -47,8 +49,8 @@ public final class HiPayPayment {
             language: language,
             customerId: nil,
             ipAddress: nil,
-            customer: nil,
-            shippingAddress: nil,
+            customer: customer?.kmp(),
+            shippingAddress: shipping?.kmp(),
             customData: [:],
             cardToken: cardToken,
             eci: 7,
