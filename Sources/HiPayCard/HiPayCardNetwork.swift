@@ -36,6 +36,20 @@ public enum HiPayCardNetwork: String, Sendable, CaseIterable {
         }
     }
 
+    /// Brand name for accessibility announcements. Brand names
+    /// are proper nouns — deliberately NOT localized (story 5.4 / D11: only the
+    /// `CardEntryStringKey` UI strings are localized, network names are not).
+    public var displayName: String {
+        switch self {
+        case .visa: return "Visa"
+        case .mastercard: return "Mastercard"
+        case .amex: return "American Express"
+        case .maestro: return "Maestro"
+        case .cb: return "CB"
+        case .bcmc: return "Bancontact"
+        }
+    }
+
     /// Asset name in the package bundle (`Image(_:bundle: .module)`).
     var assetName: String {
         switch self {
