@@ -50,6 +50,19 @@ public enum HiPayCardNetwork: String, Sendable, CaseIterable {
         }
     }
 
+    /// The KMP `CardNetwork` this maps to — used to call the commonMain
+    /// `AllowedNetworks` logic (story 5.7 / D13) without reimplementing it.
+    var kmpNetwork: CardNetwork {
+        switch self {
+        case .visa: return .visa
+        case .mastercard: return .mastercard
+        case .amex: return .amex
+        case .maestro: return .maestro
+        case .cb: return .cb
+        case .bcmc: return .bcmc
+        }
+    }
+
     /// Asset name in the package bundle (`Image(_:bundle: .module)`).
     var assetName: String {
         switch self {

@@ -49,8 +49,20 @@ public final class HiPayCardEntryController: ObservableObject {
     // user's co-brand choice but otherwise re-defaults to the domestic network.
     private var userDidSelect = false
 
-    public init(configuration: HiPayConfiguration) {
+    /// Networks the merchant accepts (story 5.7 / D13). Empty = accept all.
+    /// `networks` (displayed/selectable) is the resolved set ∩ this list.
+    public let allowedNetworks: [HiPayCardNetwork]
+    // Full resolved set (local or backend), BEFORE the allowed-networks filter —
+    // used for the authorization check.
+    private var resolvedNetworks: [HiPayCardNetwork] = []
+    private var allowedKmp: [CardNetwork] { allowedNetworks.map { $0.kmpNetwork } }
+
+    public init(
+        configuration: HiPayConfiguration,
+        allowedNetworks: [HiPayCardNetwork] = []
+    ) {
         self.configuration = configuration
+        self.allowedNetworks = allowedNetworks
     }
 
     /// The host picks one of `networks` (co-branding choice). Ignored if the
@@ -142,12 +154,19 @@ public final class HiPayCardEntryController: ObservableObject {
         }
     }
 
-    private func setNetworks(_ list: [HiPayCardNetwork]) {
-        networks = list
+    private func setNetworks(_ resolved: [HiPayCardNetwork]) {
+        resolvedNetworks = resolved
+        // Offered = resolved ∩ allowed (commonMain logic, story 5.1 — NOT
+        // reimplemented here); empty allowed → all resolved. Only offered
+        // networks are shown/selectable as chips.
+        let offered = AllowedNetworks.shared
+            .offered(resolved: resolved.map { $0.kmpNetwork }, allowed: allowedKmp)
+            .compactMap { HiPayCardNetwork($0) }
+        networks = offered
         // Keep an EXPLICIT user choice if still offered; otherwise default to
         // the first (the domestic co-brand on a backend refinement — e.g. CB).
-        if userDidSelect, let sel = selectedNetwork, list.contains(sel) { return }
-        selectedNetwork = list.first
+        if userDidSelect, let sel = selectedNetwork, offered.contains(sel) { return }
+        selectedNetwork = offered.first
     }
 
     /// Expiry as "MM/YY": the slash is appended as soon as the month's 2
@@ -264,11 +283,42 @@ public final class HiPayCardEntryController: ObservableObject {
         return message(for: CardFieldValidation.shared.cvcReason(cvc: cvc, network: network))
     }
 
+    // MARK: - Allowed networks (story 5.7 / D13)
+
+    /// Whether the entered card's network is accepted by the merchant. Empty
+    /// allowed list → always true; an unresolved/UNKNOWN card → true (not
+    /// flagged). False only when the card resolved to network(s) and NONE are
+    /// in the allowed list (i.e. the offered set — computed by the commonMain
+    /// `AllowedNetworks` in `setNetworks` — is empty).
+    var isNetworkAuthorized: Bool {
+        allowedNetworks.isEmpty || resolvedNetworks.isEmpty || !networks.isEmpty
+    }
+
+    /// "Network not authorized" inline message — shown under the number field
+    /// once it has blurred and the card's network is not accepted (value-free).
+    var networkError: String? {
+        guard numberBlurred, !isNetworkAuthorized else { return nil }
+        return message(for: ValidationReason.networkNotAuthorized)
+    }
+
+    /// The message + a11y identifier for the number field's error slot. The
+    /// "network not authorized" error takes precedence over the Luhn/incomplete
+    /// error: if the merchant does not accept the card's network there is no
+    /// point completing the number, so surface that first. (Co-brand caveat: for
+    /// a restrictive allowed list, a still-incomplete card whose LOCAL network is
+    /// disallowed may briefly show "not accepted" until backend resolution adds
+    /// an allowed co-brand — it clears then.)
+    var numberSlotError: (message: String, id: String)? {
+        if let e = networkError { return (e, "hipay.card.error.network") }
+        if let e = numberError { return (e, "hipay.card.error.number") }
+        return nil
+    }
+
     /// First field (traversal order) currently showing an error — for the host
     /// to focus on a failed submit. Nil when every field is valid/clean.
     public var firstInvalidField: Field? {
         if holderError != nil { return .holder }
-        if numberError != nil { return .number }
+        if numberSlotError != nil { return .number }
         if expiryError != nil { return .expiry }
         if cvcError != nil { return .cvc }
         return nil
@@ -282,6 +332,7 @@ public final class HiPayCardEntryController: ObservableObject {
             && isExpiryComplete
             && CardValidators.shared.isExpiryDateValid(month: expiryMonth, year: expiryYear)
             && isCvcComplete
+            && isNetworkAuthorized // story 5.7: block pay on a disallowed network
     }
 
     /// Tokenizes the entered card, creates the order, and returns the

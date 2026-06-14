@@ -98,7 +98,8 @@ public struct HiPayCardEntryView: View {
                         controller.numberEdited()
                         if controller.isNumberComplete { focus = .expiry }
                     }
-                errorSlot(controller.numberError, id: "hipay.card.error.number")
+                errorSlot(controller.numberSlotError?.message,
+                          id: controller.numberSlotError?.id ?? "hipay.card.error.number")
             }
             .accessibilitySortPriority(order(3))
 
@@ -134,10 +135,16 @@ public struct HiPayCardEntryView: View {
                         .accessibilityLabel(cvvLabel)
                         .accessibilityIdentifier("hipay.card.cvc")
                         // Info affordance INSIDE the field, right-aligned (a11y modifiers
-                        // applied BEFORE the overlay so the button keeps its own identity;
-                        // overlay added after `.disabled`/`.opacity` so it stays tappable
-                        // and fully opaque even when the CVV field is disabled).
-                        .overlay(alignment: .trailing) { cvvInfoButton.padding(.trailing, 6) }
+                        // applied BEFORE the overlay so the button keeps its own identity).
+                        // Shown only when the CVV is required: a `.disabled` field
+                        // propagates `isEnabled = false` into its overlay regardless of
+                        // modifier order, which would make the button untappable — and a
+                        // CVV explanation is moot when no CVV is needed.
+                        .overlay(alignment: .trailing) {
+                            if controller.isCvcRequired {
+                                cvvInfoButton.padding(.trailing, 6)
+                            }
+                        }
                         .onChange(of: controller.cvc) { _ in
                             controller.cvcEdited()
                             if controller.isCvcRequired && controller.isCvcComplete { focus = nil }
@@ -187,11 +194,14 @@ public struct HiPayCardEntryView: View {
         let message: String?
         switch field {
         case .holder: message = controller.holderError
-        case .number: message = controller.numberError
+        case .number: message = controller.numberSlotError?.message
         case .expiry: message = controller.expiryError
         case .cvc: message = controller.cvcError
         }
-        guard let message, lastAnnounced[field] != message else { return }
+        // Reset the dedup cache when the field is now valid, so a later
+        // recurrence of the same message is announced again (not suppressed).
+        guard let message else { lastAnnounced[field] = nil; return }
+        guard lastAnnounced[field] != message else { return }
         lastAnnounced[field] = message
         DispatchQueue.main.async {
             UIAccessibility.post(notification: .announcement, argument: message)
