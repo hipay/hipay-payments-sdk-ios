@@ -203,6 +203,77 @@ public final class HiPayCardEntryController: ObservableObject {
         CardValidators.shared.isCvcValid(cvc: cvc)
     }
 
+    // MARK: - Inline field errors (story 5.5)
+
+    /// The component's fields, in traversal order (matches the 5.4 a11y sort
+    /// priority holder→cvc). Also the `@FocusState` value type for the view.
+    public enum Field: Hashable, CaseIterable { case holder, number, expiry, cvc }
+
+    // A field's inline error shows only AFTER it has lost focus once (blur) —
+    // so we never flag a field the user hasn't finished. @Published so the view
+    // re-renders when a blur is marked.
+    @Published private(set) var holderBlurred = false
+    @Published private(set) var numberBlurred = false
+    @Published private(set) var expiryBlurred = false
+    @Published private(set) var cvcBlurred = false
+
+    /// Mark a field touched + blurred so its inline error becomes visible.
+    func markBlurred(_ field: Field) {
+        switch field {
+        case .holder: holderBlurred = true
+        case .number: numberBlurred = true
+        case .expiry: expiryBlurred = true
+        case .cvc: cvcBlurred = true
+        }
+    }
+
+    /// Reveal every field's error at once — the host calls this from its pay
+    /// button on an explicit submit attempt. Does NOT move focus (the host may
+    /// focus `firstInvalidField` itself).
+    public func revealErrors() {
+        holderBlurred = true
+        numberBlurred = true
+        expiryBlurred = true
+        cvcBlurred = true
+    }
+
+    // Localized message for a reason, or nil for `.valid` (value-free, NFR2).
+    private func message(for reason: ValidationReason) -> String? {
+        guard let key = reason.messageKey() else { return nil }
+        return HiPayCardStrings.localized(key)
+    }
+
+    /// Inline error for each field — nil when the field has not blurred yet or
+    /// is valid. Derived from the commonMain `CardFieldValidation` reasons (5.1)
+    /// + the localized message keys (5.2). Recompute on every field-text or
+    /// blur-flag change (both @Published).
+    var holderError: String? {
+        guard holderBlurred else { return nil }
+        return message(for: CardFieldValidation.shared.holderReason(holder: holder))
+    }
+    var numberError: String? {
+        guard numberBlurred else { return nil }
+        return message(for: CardFieldValidation.shared.cardNumberReason(number: panDigits))
+    }
+    var expiryError: String? {
+        guard expiryBlurred else { return nil }
+        return message(for: CardFieldValidation.shared.expiryReason(month: expiryMonth, year: expiryYear))
+    }
+    var cvcError: String? {
+        guard cvcBlurred else { return nil }
+        return message(for: CardFieldValidation.shared.cvcReason(cvc: cvc, network: network))
+    }
+
+    /// First field (traversal order) currently showing an error — for the host
+    /// to focus on a failed submit. Nil when every field is valid/clean.
+    public var firstInvalidField: Field? {
+        if holderError != nil { return .holder }
+        if numberError != nil { return .number }
+        if expiryError != nil { return .expiry }
+        if cvcError != nil { return .cvc }
+        return nil
+    }
+
     /// True when every required field is filled and valid — drive the host's
     /// pay button with this (`.disabled(!controller.canPay)`).
     public var canPay: Bool {

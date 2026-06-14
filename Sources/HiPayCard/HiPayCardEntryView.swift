@@ -1,10 +1,10 @@
 import SwiftUI
+import UIKit
 import HiPayFullservice
 
 /// Embeddable card-entry component (FR11b): the host drops this view into
 /// its own screen; card data never leaves it (the paired
-/// `HiPayCardEntryController` exposes only `tokenize()` -> token and
-/// `canTokenize` for the host's pay button).
+/// `HiPayCardEntryController` exposes only `pay()`/`tokenize()` and `canPay`).
 ///
 /// Layout: holder (upper-cased) on top, card number auto-formatted WHILE
 /// TYPING in the middle, expiry MM/YY bottom-left, CVV bottom-right (visible
@@ -12,21 +12,27 @@ import HiPayFullservice
 /// fields auto-advance focus; a complete MM/YY focuses the CVV when required,
 /// otherwise dismisses the keyboard.
 ///
-/// Accessibility & i18n (story 5.4): labels/placeholders are localized via
-/// `HiPayCardStrings` (FR/EN/IT, D11); each field exposes a label + stable
-/// `accessibilityIdentifier`; the number field announces the detected network
-/// (brand name) and the network chips are accessible buttons with `.isSelected`
-/// (the co-brand choice is actionable non-visually). The component sets the
-/// RELATIVE traversal order of its own fields (D12) unless `setsAccessibilityOrder`
-/// is false (host drives ordering).
+/// Accessibility & i18n: labels/placeholders are localized via `HiPayCardStrings`
+/// (FR/EN/IT, D11); each field exposes a label + stable `accessibilityIdentifier`;
+/// the number field announces the detected network and the chips are accessible
+/// buttons with `.isSelected` (5.4). Inline errors (5.5) appear under each field
+/// (icon + text, not colour-only) once the field has blurred, and are announced
+/// politely without stealing focus. The component sets the RELATIVE traversal
+/// order of its own fields (D12) unless `setsAccessibilityOrder` is false.
 public struct HiPayCardEntryView: View {
 
     @ObservedObject private var controller: HiPayCardEntryController
     private let theme: HiPayCardTheme
     private let setsAccessibilityOrder: Bool
-    @FocusState private var focus: Field?
+    @FocusState private var focus: HiPayCardEntryController.Field?
 
-    private enum Field { case holder, number, expiry, cvc }
+    // Track the previously focused field so we can detect a blur (iOS 15/16
+    // `.onChange` gives only the new value) and which field's error to announce.
+    @State private var previousFocus: HiPayCardEntryController.Field?
+    // Dedup announcements so re-focus / re-edit does not re-announce the same error.
+    @State private var lastAnnounced: [HiPayCardEntryController.Field: String] = [:]
+    // CVV info tooltip presentation (story 5.6).
+    @State private var showCvvInfo = false
 
     public init(
         controller: HiPayCardEntryController,
@@ -51,7 +57,8 @@ public struct HiPayCardEntryView: View {
     }
 
     // Relative traversal order (D12): higher sort priority = announced earlier.
-    // When the host opts out, all fields use 0 (neutral) so the host controls order.
+    // The priority sits on each field+error GROUP so the error follows its field.
+    // When the host opts out, all groups use 0 (neutral) so the host controls order.
     private func order(_ priority: Double) -> Double { setsAccessibilityOrder ? priority : 0 }
 
     // The TextFields bind the raw @Published values; formatting is re-applied
@@ -59,81 +66,174 @@ public struct HiPayCardEntryView: View {
     // the binding setter or a didSet only renders on focus loss (iOS 15/16).
     public var body: some View {
         VStack(spacing: 12) {
-            TextField(loc(.placeholderHolder), text: $controller.holder)
-                .textInputAutocapitalization(.characters)
-                .autocorrectionDisabled()
-                .focused($focus, equals: .holder)
-                .modifier(EntryFieldStyle(valid: controller.isHolderAcceptable))
-                .onChange(of: controller.holder) { _ in
-                    controller.holderEdited()
-                }
-                .accessibilityLabel(loc(.labelHolder))
-                .accessibilityIdentifier("hipay.card.holder")
-                .accessibilitySortPriority(order(4))
-
-            TextField(loc(.placeholderNumber), text: $controller.cardNumber)
-                .keyboardType(.numberPad)
-                .textContentType(.creditCardNumber)
-                .autocorrectionDisabled()
-                .focused($focus, equals: .number)
-                .modifier(EntryFieldStyle(valid: controller.isNumberAcceptable))
-                // a11y modifiers BEFORE the overlay so they bind to the field only
-                // and do NOT subsume the network chips' own labels/identifiers.
-                .accessibilityLabel(loc(.labelNumber))
-                .accessibilityIdentifier("hipay.card.number")
-                // The detected/selected network is announced on the number field
-                // (brand proper noun, non-localized); empty hint when none.
-                .accessibilityHint(Text(controller.selectedNetwork?.displayName ?? ""))
-                .accessibilitySortPriority(order(3))
-                // Network icon(s) on the right: neutral by default, the detected
-                // brand once known, both + a highlighted default in co-branding.
-                .overlay(alignment: .trailing) { networkIcons.padding(.trailing, 12) }
-                .onChange(of: controller.cardNumber) { _ in
-                    controller.numberEdited()
-                    if controller.isNumberComplete { focus = .expiry }
-                }
-
-            HStack(spacing: 12) {
-                TextField(loc(.placeholderExpiry), text: $controller.expiry)
-                    .keyboardType(.numberPad)
+            // Holder
+            VStack(alignment: .leading, spacing: 4) {
+                TextField(loc(.placeholderHolder), text: $controller.holder)
+                    .textInputAutocapitalization(.characters)
                     .autocorrectionDisabled()
-                    .focused($focus, equals: .expiry)
-                    .modifier(EntryFieldStyle(valid: controller.isExpiryAcceptable))
-                    .onChange(of: controller.expiry) { _ in
-                        controller.expiryEdited()
-                        guard controller.isExpiryComplete else { return }
-                        focus = controller.isCvcRequired ? .cvc : nil
-                    }
-                    .accessibilityLabel(loc(.labelExpiry))
-                    .accessibilityIdentifier("hipay.card.expiry")
-                    .accessibilitySortPriority(order(2))
-
-                // CVV is NOT masked (user decision 2026-06-12) — short-lived,
-                // low-sensitivity input; visibility prevents typing errors.
-                TextField(cvvPlaceholder, text: $controller.cvc)
-                    .keyboardType(.numberPad)
-                    .autocorrectionDisabled()
-                    .focused($focus, equals: .cvc)
-                    .disabled(!controller.isCvcRequired)
-                    .opacity(controller.isCvcRequired ? 1 : 0.4)
-                    .modifier(EntryFieldStyle(valid: controller.isCvcAcceptable))
-                    .onChange(of: controller.cvc) { _ in
-                        controller.cvcEdited()
-                        if controller.isCvcRequired && controller.isCvcComplete { focus = nil }
-                    }
-                    .accessibilityLabel(cvvLabel)
-                    .accessibilityIdentifier("hipay.card.cvc")
-                    .accessibilitySortPriority(order(1))
+                    .focused($focus, equals: .holder)
+                    .modifier(EntryFieldStyle(valid: controller.isHolderAcceptable))
+                    .onChange(of: controller.holder) { _ in controller.holderEdited() }
+                    .accessibilityLabel(loc(.labelHolder))
+                    .accessibilityIdentifier("hipay.card.holder")
+                errorSlot(controller.holderError, id: "hipay.card.error.holder")
             }
+            .accessibilitySortPriority(order(4))
+
+            // Card number (+ network chips overlay)
+            VStack(alignment: .leading, spacing: 4) {
+                TextField(loc(.placeholderNumber), text: $controller.cardNumber)
+                    .keyboardType(.numberPad)
+                    .textContentType(.creditCardNumber)
+                    .autocorrectionDisabled()
+                    .focused($focus, equals: .number)
+                    .modifier(EntryFieldStyle(valid: controller.isNumberAcceptable))
+                    // a11y modifiers BEFORE the overlay so they bind to the field
+                    // only and do NOT subsume the network chips' own a11y.
+                    .accessibilityLabel(loc(.labelNumber))
+                    .accessibilityIdentifier("hipay.card.number")
+                    .accessibilityHint(Text(controller.selectedNetwork?.displayName ?? ""))
+                    .overlay(alignment: .trailing) { networkIcons.padding(.trailing, 12) }
+                    .onChange(of: controller.cardNumber) { _ in
+                        controller.numberEdited()
+                        if controller.isNumberComplete { focus = .expiry }
+                    }
+                errorSlot(controller.numberError, id: "hipay.card.error.number")
+            }
+            .accessibilitySortPriority(order(3))
+
+            HStack(alignment: .top, spacing: 12) {
+                // Expiry
+                VStack(alignment: .leading, spacing: 4) {
+                    TextField(loc(.placeholderExpiry), text: $controller.expiry)
+                        .keyboardType(.numberPad)
+                        .autocorrectionDisabled()
+                        .focused($focus, equals: .expiry)
+                        .modifier(EntryFieldStyle(valid: controller.isExpiryAcceptable))
+                        .onChange(of: controller.expiry) { _ in
+                            controller.expiryEdited()
+                            guard controller.isExpiryComplete else { return }
+                            focus = controller.isCvcRequired ? .cvc : nil
+                        }
+                        .accessibilityLabel(loc(.labelExpiry))
+                        .accessibilityIdentifier("hipay.card.expiry")
+                    errorSlot(controller.expiryError, id: "hipay.card.error.expiry")
+                }
+                .accessibilitySortPriority(order(2))
+
+                // CVV — NOT masked (user decision 2026-06-12); disabled when the
+                // detected network does not require a CVC.
+                VStack(alignment: .leading, spacing: 4) {
+                    TextField(cvvPlaceholder, text: $controller.cvc)
+                        .keyboardType(.numberPad)
+                        .autocorrectionDisabled()
+                        .focused($focus, equals: .cvc)
+                        .disabled(!controller.isCvcRequired)
+                        .opacity(controller.isCvcRequired ? 1 : 0.4)
+                        .modifier(EntryFieldStyle(valid: controller.isCvcAcceptable))
+                        .accessibilityLabel(cvvLabel)
+                        .accessibilityIdentifier("hipay.card.cvc")
+                        // Info affordance INSIDE the field, right-aligned (a11y modifiers
+                        // applied BEFORE the overlay so the button keeps its own identity;
+                        // overlay added after `.disabled`/`.opacity` so it stays tappable
+                        // and fully opaque even when the CVV field is disabled).
+                        .overlay(alignment: .trailing) { cvvInfoButton.padding(.trailing, 6) }
+                        .onChange(of: controller.cvc) { _ in
+                            controller.cvcEdited()
+                            if controller.isCvcRequired && controller.isCvcComplete { focus = nil }
+                        }
+                    errorSlot(controller.cvcError, id: "hipay.card.error.cvc")
+                }
+                .accessibilitySortPriority(order(1))
+            }
+        }
+        // Single blur detector for all fields: when focus leaves a field, mark it
+        // blurred (reveals its inline error) and announce the error politely once.
+        .onChange(of: focus) { newFocus in
+            if let blurred = previousFocus, blurred != newFocus {
+                controller.markBlurred(blurred)
+                announceError(for: blurred)
+            }
+            previousFocus = newFocus
         }
     }
 
-    // Right-aligned network icons. Neutral placeholder when nothing is
-    // detected; the detected brand once known; in co-branding both are shown,
-    // the selected/default one highlighted (full opacity + outline) and the
-    // other dimmed. Each is an accessibility BUTTON (VoiceOver gets the system
-    // "double-tap to activate") labelled with the brand name; the selected one
-    // carries the `.isSelected` trait — tap to switch the co-brand network.
+    // Inline error slot under a field: icon + text (NOT colour-only, WCAG 1.4.1).
+    // Collapses to nothing when there is no error (user preference: tighter
+    // vertical spacing when valid — the error expands the layout when it appears,
+    // rather than reserving a permanent blank line). Sizes to content
+    // (.fixedSize) so a long localized message wraps at large Dynamic Type.
+    @ViewBuilder private func errorSlot(_ message: String?, id: String) -> some View {
+        if let message {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .imageScale(.small)
+                    .accessibilityHidden(true)
+                Text(message)
+                    .accessibilityIdentifier(id)
+            }
+            .font(.caption)
+            .foregroundColor(.red)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // Post a polite, non-focus-stealing announcement of a field's error on blur.
+    // Deferred to the next runloop so it lands after VoiceOver's focus-change
+    // utterance; deduped so re-focus/re-edit does not repeat it. (Queued/polite
+    // priority is iOS 17+; at iOS 15/16 this is best-effort, non-interrupting.)
+    private func announceError(for field: HiPayCardEntryController.Field) {
+        let message: String?
+        switch field {
+        case .holder: message = controller.holderError
+        case .number: message = controller.numberError
+        case .expiry: message = controller.expiryError
+        case .cvc: message = controller.cvcError
+        }
+        guard let message, lastAnnounced[field] != message else { return }
+        lastAnnounced[field] = message
+        DispatchQueue.main.async {
+            UIAccessibility.post(notification: .announcement, argument: message)
+        }
+    }
+
+    // CVV info affordance (story 5.6): tap-triggered (never hover) popover with
+    // the localized explanation. Dismiss/Escape/focus-restore/not-a-trap come
+    // free from `.popover`. The button's a11y label IS the explanation, so
+    // VoiceOver reads it ON DEMAND when focused — no announcement is posted.
+    private var cvvInfoButton: some View {
+        Button { showCvvInfo = true } label: {
+            Image(systemName: "info.circle")
+        }
+        .buttonStyle(.plain)
+        .frame(minWidth: 44, minHeight: 44) // tap target >= 44x44 (HIG)
+        .contentShape(Rectangle())
+        .accessibilityLabel(Text(loc(.cvvTooltip)))
+        .accessibilityIdentifier("hipay.card.cvc.info")
+        .popover(isPresented: $showCvvInfo) { cvvTooltipContent }
+    }
+
+    @ViewBuilder private var cvvTooltipContent: some View {
+        let content = Text(loc(.cvvTooltip))
+            .font(.callout)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true) // wrap to 2+ lines, never truncate
+            .padding()
+            .frame(maxWidth: 280)
+            .accessibilityIdentifier("hipay.card.cvc.tooltip")
+        if #available(iOS 16.4, *) {
+            content.presentationCompactAdaptation(.popover) // stay a compact popover on iPhone
+        } else {
+            content // iOS 15/16: sheet fallback — still dismissible, restores focus, not a trap
+        }
+    }
+
+    // Right-aligned network icons. Neutral placeholder when nothing is detected;
+    // the detected brand once known; in co-branding both are shown, the selected
+    // one highlighted and the other dimmed. Each is an accessibility BUTTON
+    // (VoiceOver gets the system "double-tap to activate") labelled with the
+    // brand name; the selected one carries `.isSelected` — tap to switch.
     @ViewBuilder private var networkIcons: some View {
         HStack(spacing: 6) {
             if controller.networks.isEmpty {
@@ -159,8 +259,7 @@ public struct HiPayCardEntryView: View {
     }
 
     // A brand logo inside a credit-card-shaped chip (~1.6:1) with left/right
-    // padding around the logo. Outlined when highlighted — including the lone
-    // detected network, not only the co-brand selection.
+    // padding around the logo. Outlined when highlighted.
     private func brandChip(assetName: String, highlighted: Bool, dimmed: Bool) -> some View {
         Image(assetName, bundle: .module)
             .resizable()

@@ -12,7 +12,7 @@
 "PLACEHOLDER_CVV" = "CVV";
 
 "CVV_OPTIONAL" = "Facoltativo";
-"CVV_TOOLTIP" = "Il codice di sicurezza di 3 o 4 cifre sul retro della carta (sul fronte per Amex).";
+"CVV_TOOLTIP" = "Inserisci il CVV o codice di sicurezza della tua carta.";
 
 "ERROR_INVALID_NUMBER" = "Numero della carta non valido";
 "ERROR_INCOMPLETE_NUMBER" = "Numero della carta incompleto";
