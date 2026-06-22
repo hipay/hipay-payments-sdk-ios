@@ -1,0 +1,48 @@
+// swift-tools-version:5.9
+import PackageDescription
+
+// REMOTE distribution manifest (story 9.1) — GENERATED, do not hand-edit.
+// scripts/build-release.sh fills the binaryTarget url (the GitHub Release asset
+// for the release tag = the centralized version, story 8.2) and checksum
+// (swift package compute-checksum HiPayFullservice.xcframework.zip).
+//
+// This mirrors the local Package.swift exactly EXCEPT the HiPayFullservice
+// target, which is a *remote* binaryTarget(url:checksum:) instead of a local
+// binaryTarget(path:). The two Swift source products and the HiPayCard resources
+// are unchanged.
+//
+// NOTE: the host repo + dual GitLab/GitHub topology is decided in
+// architecture-repos.md (deferred). The url below carries a repo placeholder
+// (default OWNER/REPO) until then — it is NOT a final, decided URL.
+let package = Package(
+    name: "HiPayFullserviceKMP",
+    // Required for the HiPayCard localized .strings catalogs (story 5.2);
+    // a device locale with no catalog falls back to EN.
+    defaultLocalization: "en",
+    platforms: [.iOS(.v15)],
+    products: [
+        // Headless SDK: payment orchestration, no UI.
+        .library(name: "HiPayCore", targets: ["HiPayCore"]),
+        // Card entry UI layer on top of HiPayCore.
+        .library(name: "HiPayCard", targets: ["HiPayCard"]),
+    ],
+    targets: [
+        // KMP binary hosted as a GitHub Release asset; integrity pinned by checksum.
+        .binaryTarget(
+            name: "HiPayFullservice",
+            url: "{{URL}}",
+            checksum: "{{CHECKSUM}}"
+        ),
+        .target(
+            name: "HiPayCore",
+            dependencies: ["HiPayFullservice"]
+        ),
+        .target(
+            name: "HiPayCard",
+            dependencies: ["HiPayCore"],
+            // Card-network brand icons (neutral + Visa/MC/Amex/Maestro/BCMC/CB),
+            // loaded via Image(_:bundle: .module).
+            resources: [.process("Resources")]
+        ),
+    ]
+)
