@@ -118,7 +118,6 @@ public struct HiPayCardEntryView: View {
                         }
                         .accessibilityLabel(loc(.labelExpiry))
                         .accessibilityIdentifier("hipay.card.expiry")
-                    errorSlot(controller.expiryError, id: "hipay.card.error.expiry")
                 }
                 .accessibilitySortPriority(order(2))
 
@@ -149,9 +148,19 @@ public struct HiPayCardEntryView: View {
                             controller.cvcEdited()
                             if controller.isCvcRequired && controller.isCvcComplete { focus = nil }
                         }
-                    errorSlot(controller.cvcError, id: "hipay.card.error.cvc")
                 }
                 .accessibilitySortPriority(order(1))
+            }
+            // Expiry/CVV errors full width below the row (11.2), between the fields and the info.
+            errorSlot(controller.expiryError, id: "hipay.card.error.expiry")
+            errorSlot(controller.cvcError, id: "hipay.card.error.cvc")
+            // CVV help as a full-width inline text (no popover, 11.2), toggled by the "ⓘ".
+            if controller.isCvcRequired && showCvvInfo {
+                Text(loc(.cvvTooltip))
+                    .font(.caption)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("hipay.card.cvc.tooltip")
             }
         }
         // Single blur detector for all fields: when focus leaves a field, mark it
@@ -208,12 +217,11 @@ public struct HiPayCardEntryView: View {
         }
     }
 
-    // CVV info affordance (story 5.6): tap-triggered (never hover) popover with
-    // the localized explanation. Dismiss/Escape/focus-restore/not-a-trap come
-    // free from `.popover`. The button's a11y label IS the explanation, so
-    // VoiceOver reads it ON DEMAND when focused — no announcement is posted.
+    // CVV info affordance (story 11.2): tap TOGGLES the full-width inline help text rendered
+    // below the expiry/CVV row (no popover). The button's a11y label IS the explanation, so
+    // VoiceOver reads it on demand when focused.
     private var cvvInfoButton: some View {
-        Button { showCvvInfo = true } label: {
+        Button { showCvvInfo.toggle() } label: {
             Image(systemName: "info.circle")
         }
         .buttonStyle(.plain)
@@ -221,22 +229,6 @@ public struct HiPayCardEntryView: View {
         .contentShape(Rectangle())
         .accessibilityLabel(Text(loc(.cvvTooltip)))
         .accessibilityIdentifier("hipay.card.cvc.info")
-        .popover(isPresented: $showCvvInfo) { cvvTooltipContent }
-    }
-
-    @ViewBuilder private var cvvTooltipContent: some View {
-        let content = Text(loc(.cvvTooltip))
-            .font(.callout)
-            .multilineTextAlignment(.leading)
-            .fixedSize(horizontal: false, vertical: true) // wrap to 2+ lines, never truncate
-            .padding()
-            .frame(maxWidth: 280)
-            .accessibilityIdentifier("hipay.card.cvc.tooltip")
-        if #available(iOS 16.4, *) {
-            content.presentationCompactAdaptation(.popover) // stay a compact popover on iPhone
-        } else {
-            content // iOS 15/16: sheet fallback — still dismissible, restores focus, not a trap
-        }
     }
 
     // Right-aligned network icons. Neutral placeholder when nothing is detected;
