@@ -148,6 +148,11 @@ public struct HiPayCardEntryView: View {
                             controller.cvcEdited()
                             if controller.isCvcRequired && controller.isCvcComplete { focus = nil }
                         }
+                        // Reset the help when CVC stops being required so it never re-shows
+                        // unprompted when a CVC-required card is re-entered (review 11.2).
+                        .onChange(of: controller.isCvcRequired) { isRequired in
+                            if !isRequired { showCvvInfo = false }
+                        }
                 }
                 .accessibilitySortPriority(order(1))
             }
