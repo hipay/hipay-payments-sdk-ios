@@ -46,15 +46,11 @@ public struct HiPayCardEntryView: View {
 
     private func loc(_ key: CardEntryStringKey) -> String { HiPayCardStrings.localized(key) }
 
-    // CVV label/placeholder gain the localized "optional" suffix when the
-    // detected network does not require a CVC.
-    private var cvvOptional: Bool { !controller.isCvcRequired }
-    private var cvvPlaceholder: String {
-        cvvOptional ? "\(loc(.placeholderCvv)) (\(loc(.cvvOptional)))" : loc(.placeholderCvv)
-    }
-    private var cvvLabel: String {
-        cvvOptional ? "\(loc(.labelCvv)), \(loc(.cvvOptional))" : loc(.labelCvv)
-    }
+    // CVC is required (enabled) or not-applicable (disabled) — never a true "optional"
+    // enterable state — so the label/placeholder carry no "(optional)" suffix (story 11.3
+    // review); the disabled+dimmed field already conveys "not applicable".
+    private var cvvPlaceholder: String { loc(.placeholderCvv) }
+    private var cvvLabel: String { loc(.labelCvv) }
 
     // Relative traversal order (D12): higher sort priority = announced earlier.
     // The priority sits on each field+error GROUP so the error follows its field.
