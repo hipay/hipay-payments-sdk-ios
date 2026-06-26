@@ -391,6 +391,7 @@ public final class HiPayCardEntryController: ObservableObject {
                 multiUse: multiUse
             )
             cardNumber = ""
+            expiry = ""
             cvc = ""
             networks = []
             selectedNetwork = nil
