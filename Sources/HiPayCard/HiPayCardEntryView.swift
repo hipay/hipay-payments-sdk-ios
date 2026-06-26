@@ -173,6 +173,10 @@ public struct HiPayCardEntryView: View {
             }
             previousFocus = newFocus
         }
+        // Lock all fields while a payment is in flight — driven by the SDK itself (story 11.14):
+        // the controller sets isProcessing across pay() (incl. the 3DS round-trip), no host wiring.
+        // SwiftUI cascades .disabled to children and composes with each field's own .disabled.
+        .disabled(controller.isProcessing)
     }
 
     // Inline error slot under a field: icon + text (NOT colour-only, WCAG 1.4.1).

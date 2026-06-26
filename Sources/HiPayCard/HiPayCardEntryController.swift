@@ -1,6 +1,20 @@
 import Foundation
+import AuthenticationServices
+import UIKit
 import HiPayCore
 import HiPayFullservice
+
+/// How the SDK presents the 3DS challenge when `pay(threeDS:)` hits a `FORWARDING` transaction
+/// (story 11.13). Both modes are turnkey — `pay()` returns the FINAL confirmed transaction; the
+/// host never calls the headless `getTransaction`/`parseCallback`.
+public enum HiPayThreeDSMode {
+    /// In-app `ASWebAuthenticationSession` — auto-captures the callback, no soft-lock, no host
+    /// wiring needed. The default.
+    case inAppSession
+    /// External Safari (previous behaviour). The host must forward the return URL once via
+    /// `resume3DS(_:)` (e.g. from `.onOpenURL`); the SDK then confirms and `pay()` returns.
+    case externalBrowser
+}
 
 /// Owns the card-entry state INSIDE the library boundary: the host creates
 /// the controller, embeds `HiPayCardEntryView`, and calls `tokenize()` from
@@ -41,7 +55,19 @@ public final class HiPayCardEntryController: ObservableObject {
     /// co-brand when present; the user may change it via `selectNetwork`.
     @Published public private(set) var selectedNetwork: HiPayCardNetwork?
 
+    /// True while a `pay()` is in flight (tokenise → order → 3DS round-trip), set by the SDK
+    /// (story 11.14). The card-entry view locks its fields on this; the host disables its own
+    /// Pay button with `!canPay || isProcessing`. Read-only — no integrator wiring needed.
+    @Published public private(set) var isProcessing: Bool = false
+
     private let configuration: HiPayConfiguration
+
+    // MARK: - 3DS presentation (story 11.13)
+    /// Retained for the in-app session's lifetime + its anchor-window provider.
+    private var webAuthSession: ASWebAuthenticationSession?
+    private let webAuthContext = WebAuthContextProvider()
+    /// Pending external-browser 3DS: `pay()` suspends here until `resume3DS(_:)` confirms.
+    private var pending3DS: (continuation: CheckedContinuation<HiPayTransaction, Error>, reference: String?, signature: String?)?
     private lazy var tokenizer = CardTokenizer(config: configuration.kmpConfig)
     // BIN already resolved against the backend — avoids re-querying per keystroke.
     private var lastResolvedDigits: String?
@@ -356,13 +382,17 @@ public final class HiPayCardEntryController: ObservableObject {
         authenticationIndicator: Int = 0,
         signature: String? = nil,
         customer: HiPayCustomerInfo? = nil,
-        shipping: HiPayCustomerInfo? = nil
+        shipping: HiPayCustomerInfo? = nil,
+        threeDS: HiPayThreeDSMode = .inAppSession
     ) async throws -> HiPayTransaction {
+        // Lock the fields for the whole flow (incl. the suspended 3DS); reset on every exit (11.14).
+        isProcessing = true
+        defer { isProcessing = false }
         // Capture the chosen network BEFORE tokenize() clears the component state.
         let paymentProduct = selectedNetwork?.paymentProductCode ?? "visa"
         let token = try await tokenize()
         let payment = HiPayPayment(configuration: configuration)
-        return try await payment.requestCardOrder(
+        let tx = try await payment.requestCardOrder(
             orderId: orderId,
             amount: amount,
             currency: currency,
@@ -376,6 +406,64 @@ public final class HiPayCardEntryController: ObservableObject {
             customer: customer,
             shipping: shipping
         )
+        // No 3DS → already final.
+        guard tx.state == .forwarding, let url = tx.forwardUrl else {
+            return tx
+        }
+        // 3DS challenge: the SDK presents it and returns the FINAL transaction (story 11.13).
+        let reference = tx.transactionReference
+        switch threeDS {
+        case .inAppSession:
+            guard let callback = await present3DSInApp(url, callbackScheme: redirectScheme) else {
+                return tx // user cancelled the sheet → expose the FORWARDING tx (not confirmed)
+            }
+            return try await confirm3DS(callbackURL: callback, reference: reference, signature: signature)
+        case .externalBrowser:
+            // Open external Safari and suspend until the host forwards the return via resume3DS(_:).
+            return try await withCheckedThrowingContinuation { continuation in
+                self.pending3DS = (continuation, reference, signature)
+                Task { @MainActor in await UIApplication.shared.open(url) }
+            }
+        }
+    }
+
+    /// Forward the 3DS return URL here (from `.onOpenURL`) for the `.externalBrowser` mode; the SDK
+    /// confirms via `getTransaction` and resumes the suspended `pay()`. No-op if none pending or in
+    /// `.inAppSession` mode (that captures the callback itself). Story 11.13.
+    public func resume3DS(_ url: URL) {
+        guard let pending = pending3DS else { return }
+        pending3DS = nil
+        Task { @MainActor in
+            do {
+                let tx = try await confirm3DS(callbackURL: url, reference: pending.reference, signature: pending.signature)
+                pending.continuation.resume(returning: tx)
+            } catch {
+                pending.continuation.resume(throwing: error)
+            }
+        }
+    }
+
+    /// Presents the 3DS page in-app (ASWebAuthenticationSession) bound to `callbackScheme`; resumes
+    /// with the callback URL, or nil if cancelled/errored. Retains the session for its lifetime.
+    private func present3DSInApp(_ url: URL, callbackScheme: String) async -> URL? {
+        await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
+            let session = ASWebAuthenticationSession(url: url, callbackURLScheme: callbackScheme) { callbackURL, _ in
+                continuation.resume(returning: callbackURL)
+            }
+            session.presentationContextProvider = webAuthContext
+            session.prefersEphemeralWebBrowserSession = false
+            webAuthSession = session
+            session.start()
+        }
+    }
+
+    /// Confirms the authoritative outcome (FR9): prefer the captured `reference`, else the callback's
+    /// `reference` param; query `getTransaction`. The redirect params are never trusted directly.
+    private func confirm3DS(callbackURL: URL, reference: String?, signature: String?) async throws -> HiPayTransaction {
+        let callback = try HiPay.parseCallback(callbackURL)
+        let ref = reference ?? callback.queryParams["reference"]
+        guard let ref else { throw HiPayError.from(NSError(domain: "HiPayCard", code: -1)) }
+        return try await HiPayPayment(configuration: configuration).getTransaction(reference: ref, signature: signature)
     }
 
     /// Tokenizes against HiPay Secure Vault. Internal: the token never leaves
@@ -390,6 +478,7 @@ public final class HiPayCardEntryController: ObservableObject {
                 cvc: isCvcRequired ? cvc : "",
                 multiUse: multiUse
             )
+            holder = ""
             cardNumber = ""
             expiry = ""
             cvc = ""
@@ -401,5 +490,16 @@ public final class HiPayCardEntryController: ObservableObject {
         } catch {
             throw HiPayError.from(error)
         }
+    }
+}
+
+/// Supplies the anchor window for the in-app 3DS `ASWebAuthenticationSession` (story 11.13).
+/// Resolves the current key window globally — no host wiring needed.
+private final class WebAuthContextProvider: NSObject, ASWebAuthenticationPresentationContextProviding {
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow } ?? ASPresentationAnchor()
     }
 }
