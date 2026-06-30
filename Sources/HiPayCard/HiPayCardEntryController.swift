@@ -67,8 +67,8 @@ public final class HiPayCardEntryController: ObservableObject {
     private var webAuthSession: ASWebAuthenticationSession?
     private let webAuthContext = WebAuthContextProvider()
     /// Pending external-browser 3DS: `pay()` suspends here until `resume3DS(_:)` confirms, or until
-    /// the app returns to the foreground without a callback (user aborted → `forwarding` returned).
-    private var pending3DS: (continuation: CheckedContinuation<HiPayTransaction, Error>, reference: String?, signature: String?, forwarding: HiPayTransaction)?
+    /// the app returns to the foreground without a callback (then we reconcile with the server).
+    private var pending3DS: (continuation: CheckedContinuation<HiPayTransaction, Error>, reference: String?, signature: String?)?
     /// Observes app re-activation to detect a user abort in `.externalBrowser` (story 11.16).
     private var foregroundObserver: NSObjectProtocol?
     private lazy var tokenizer = CardTokenizer(config: configuration.kmpConfig)
@@ -418,14 +418,17 @@ public final class HiPayCardEntryController: ObservableObject {
         switch threeDS {
         case .inAppSession:
             guard let callback = await present3DSInApp(url, callbackScheme: redirectScheme) else {
-                return tx // user cancelled the sheet → expose the FORWARDING tx (not confirmed)
+                // Sheet cancelled → DON'T assume an abort: reconcile with the server,
+                // same as the external/CMP paths. The user may have validated 3DS then dismissed.
+                return await reconcileOrPending(reference: reference, signature: signature)
             }
-            return try await confirm3DS(callbackURL: callback, reference: reference, signature: signature)
+            let parsedRef = (try? HiPay.parseCallback(callback))?.queryParams["reference"]
+            return await reconcileOrPending(reference: reference ?? parsedRef, signature: signature)
         case .externalBrowser:
             // Open external Safari and suspend until the host forwards the return via resume3DS(_:),
             // or until the user comes back without finishing (abort watcher, story 11.16).
             return try await withCheckedThrowingContinuation { continuation in
-                self.pending3DS = (continuation, reference, signature, tx)
+                self.pending3DS = (continuation, reference, signature)
                 self.armExternalAbortWatcher()
                 Task { @MainActor in await UIApplication.shared.open(url) }
             }
@@ -440,12 +443,9 @@ public final class HiPayCardEntryController: ObservableObject {
         pending3DS = nil
         clearExternalAbortWatcher() // a real callback arrived → stop watching for an abort
         Task { @MainActor in
-            do {
-                let tx = try await confirm3DS(callbackURL: url, reference: pending.reference, signature: pending.signature)
-                pending.continuation.resume(returning: tx)
-            } catch {
-                pending.continuation.resume(throwing: error)
-            }
+            let parsedRef = (try? HiPay.parseCallback(url))?.queryParams["reference"]
+            let tx = await reconcileOrPending(reference: pending.reference ?? parsedRef, signature: pending.signature)
+            pending.continuation.resume(returning: tx)
         }
     }
 
@@ -471,15 +471,10 @@ public final class HiPayCardEntryController: ObservableObject {
         pending3DS = nil
         clearExternalAbortWatcher()
         Task { @MainActor in
-            do {
-                // Authoritative state from the captured reference — COMPLETED if the user validated,
-                // still FORWARDING if they genuinely abandoned.
-                let tx = try await confirmByReference(reference: pending.reference, signature: pending.signature)
-                pending.continuation.resume(returning: tx)
-            } catch {
-                // Can't verify (e.g. no reference / network) → expose the FORWARDING tx.
-                pending.continuation.resume(returning: pending.forwarding)
-            }
+            // Authoritative state from the captured reference — COMPLETED if the user validated,
+            // still FORWARDING if they genuinely abandoned, PENDING if the server is unreachable.
+            let tx = await reconcileOrPending(reference: pending.reference, signature: pending.signature)
+            pending.continuation.resume(returning: tx)
         }
     }
 
@@ -494,7 +489,8 @@ public final class HiPayCardEntryController: ObservableObject {
     /// with the callback URL, or nil if cancelled/errored. Retains the session for its lifetime.
     private func present3DSInApp(_ url: URL, callbackScheme: String) async -> URL? {
         await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
-            let session = ASWebAuthenticationSession(url: url, callbackURLScheme: callbackScheme) { callbackURL, _ in
+            let session = ASWebAuthenticationSession(url: url, callbackURLScheme: callbackScheme) { [weak self] callbackURL, _ in
+                self?.webAuthSession = nil // release the finished session (don't retain it until the next pay())
                 continuation.resume(returning: callbackURL)
             }
             session.presentationContextProvider = webAuthContext
@@ -504,20 +500,18 @@ public final class HiPayCardEntryController: ObservableObject {
         }
     }
 
-    /// Confirms the authoritative outcome (FR9): prefer the captured `reference`, else the callback's
-    /// `reference` param; query `getTransaction`. The redirect params are never trusted directly.
-    private func confirm3DS(callbackURL: URL, reference: String?, signature: String?) async throws -> HiPayTransaction {
-        let callback = try HiPay.parseCallback(callbackURL)
-        let ref = reference ?? callback.queryParams["reference"]
-        guard let ref else { throw HiPayError.from(NSError(domain: "HiPayCard", code: -1)) }
-        return try await HiPayPayment(configuration: configuration).getTransaction(reference: ref, signature: signature)
-    }
-
-    /// Confirms the authoritative outcome from the captured reference alone (story 11.16, foreground
-    /// reconciliation — no callback URL to parse). FR9: the server state is the source of truth.
-    private func confirmByReference(reference: String?, signature: String?) async throws -> HiPayTransaction {
-        guard let reference else { throw HiPayError.from(NSError(domain: "HiPayCard", code: -1)) }
-        return try await HiPayPayment(configuration: configuration).getTransaction(reference: reference, signature: signature)
+    /// The single 3DS-return resolver. Queries `getTransaction` for the
+    /// authoritative outcome from the captured `reference` (redirect params are never trusted as the
+    /// state). If we can't confirm — no reference, or the server is unreachable — we return an
+    /// indeterminate PENDING snapshot ("verification required"), NEVER a false abort or a thrown error,
+    /// so the host can re-query later instead of mis-reporting a possibly-captured payment.
+    private func reconcileOrPending(reference: String?, signature: String?) async -> HiPayTransaction {
+        guard let reference else { return .verificationPending(reference: nil) }
+        do {
+            return try await HiPayPayment(configuration: configuration).getTransaction(reference: reference, signature: signature)
+        } catch {
+            return .verificationPending(reference: reference)
+        }
     }
 
     /// Tokenizes against HiPay Secure Vault. Internal: the token never leaves

@@ -36,4 +36,21 @@ public struct HiPayTransaction: Sendable {
         reason = kmp.reason
         threeDSecureAuthenticationStatus = kmp.threeDSecure?.authenticationStatus
     }
+
+    private init(state: HiPayTransactionState, transactionReference: String?) {
+        self.state = state
+        self.transactionReference = transactionReference
+        self.forwardUrl = nil
+        self.status = nil
+        self.reason = nil
+        self.threeDSecureAuthenticationStatus = nil
+    }
+
+    /// Indeterminate "verification pending" snapshot (story 11.16): the SDK could not reach the server
+    /// to confirm a 3DS return, so the real outcome is unknown. `.pending` — NOT `.forwarding` (which
+    /// means a server-confirmed not-completed = genuine abort): the host should treat it as awaiting
+    /// confirmation and re-query `getTransaction` later, never as a failure or an abort.
+    public static func verificationPending(reference: String?) -> HiPayTransaction {
+        HiPayTransaction(state: .pending, transactionReference: reference)
+    }
 }
