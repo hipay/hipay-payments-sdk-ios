@@ -30,5 +30,9 @@ let package = Package(
             // loaded via Image(_:bundle: .module).
             resources: [.process("Resources")]
         ),
+        // NOTE: the Swift unit tests (Tests/HiPayCardTests) are NOT an SPM test target: SPM
+        // package tests run inside Apple's generic xctest host, which has no application
+        // identifier, so every Keychain call fails with errSecMissingEntitlement. They are
+        // built and run app-hosted by TestHost/TestHost.xcodeproj instead (see its README).
     ]
 )
