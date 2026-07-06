@@ -19,6 +19,11 @@ public final class HiPayPayment {
     /// (`{scheme}://hipay-fullservice/gateway/orders/{orderId}/{status}`).
     ///
     /// - Parameter authenticationIndicator: 0 bypass 3DS, 1 if available, 2 mandatory.
+    /// - Parameter oneClick: `true` for a saved-card payment reusing a stored
+    ///   multi-use token (adds `one_click=1`; ECI stays 7 — a one-click payment
+    ///   is customer-initiated e-commerce, not recurring). When the gateway
+    ///   rejects the stored token as unusable, the error surfaces as
+    ///   `HiPayError.cardNoLongerValid`.
     public func requestCardOrder(
         orderId: String,
         amount: String,
@@ -31,7 +36,8 @@ public final class HiPayPayment {
         authenticationIndicator: Int = 0,
         signature: String? = nil,
         customer: HiPayCustomerInfo? = nil,
-        shipping: HiPayCustomerInfo? = nil
+        shipping: HiPayCustomerInfo? = nil,
+        oneClick: Bool = false
     ) async throws -> HiPayTransaction {
         let base = "\(redirectScheme)://hipay-fullservice/gateway/orders/\(orderId)"
         let order = OrderRequest(
@@ -54,11 +60,19 @@ public final class HiPayPayment {
             customData: [:],
             cardToken: cardToken,
             eci: 7,
-            authenticationIndicator: Int32(authenticationIndicator)
+            authenticationIndicator: Int32(authenticationIndicator),
+            oneClick: oneClick
         )
         do {
             return HiPayTransaction(try await gateway.requestNewOrder(order: order, signature: signature))
         } catch {
+            // One-click: recognize the definitive invalid-token verdict (KMP
+            // classifier — single-sourced logic, D4: no logic in the facade).
+            if oneClick,
+               let kotlin = (error as NSError).userInfo["KotlinException"] as? HiPayException,
+               let invalid = SavedCardPaymentKt.cardNoLongerValidOrNull(error: kotlin) {
+                throw HiPayError.from(kotlin: invalid)
+            }
             throw HiPayError.from(error)
         }
     }

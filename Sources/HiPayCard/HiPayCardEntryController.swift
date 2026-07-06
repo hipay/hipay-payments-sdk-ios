@@ -72,6 +72,9 @@ public final class HiPayCardEntryController: ObservableObject {
     /// Observes app re-activation to detect a user abort in `.externalBrowser` (story 11.16).
     private var foregroundObserver: NSObjectProtocol?
     private lazy var tokenizer = CardTokenizer(config: configuration.kmpConfig)
+    /// Saved-card store, created lazily off the main thread and confined to one
+    /// serial queue (the KMP store is not thread-safe).
+    private lazy var savedCardStore = SavedCardStoreBox(configuration: configuration)
     // BIN already resolved against the backend — avoids re-querying per keystroke.
     private var lastResolvedDigits: String?
     // True only after an explicit user tap — so a backend refinement keeps the
@@ -375,6 +378,10 @@ public final class HiPayCardEntryController: ObservableObject {
     ///
     /// The `signature` is the HS signature of orderId+amount+currency, computed
     /// by your backend — the SDK never computes it.
+    /// With `saveCard` `true` (the payer's explicit consent — the save switch state), the card
+    /// is tokenized as reusable and persisted to the secure card store, but ONLY once this call
+    /// itself observes a final COMPLETED (directly, or through the SDK-managed 3DS). A PENDING
+    /// outcome never saves; storage failures are silent — the payment result is unaffected.
     public func pay(
         orderId: String,
         amount: String,
@@ -386,14 +393,15 @@ public final class HiPayCardEntryController: ObservableObject {
         signature: String? = nil,
         customer: HiPayCustomerInfo? = nil,
         shipping: HiPayCustomerInfo? = nil,
-        threeDS: HiPayThreeDSMode = .inAppSession
+        threeDS: HiPayThreeDSMode = .inAppSession,
+        saveCard: Bool = false
     ) async throws -> HiPayTransaction {
         // Lock the fields for the whole flow (incl. the suspended 3DS); reset on every exit (11.14).
         isProcessing = true
         defer { isProcessing = false }
         // Capture the chosen network BEFORE tokenize() clears the component state.
         let paymentProduct = selectedNetwork?.paymentProductCode ?? "visa"
-        let token = try await tokenize()
+        let token = try await tokenize(multiUse: saveCard)
         let payment = HiPayPayment(configuration: configuration)
         let tx = try await payment.requestCardOrder(
             orderId: orderId,
@@ -409,6 +417,84 @@ public final class HiPayCardEntryController: ObservableObject {
             customer: customer,
             shipping: shipping
         )
+        let final = try await resolve3DS(tx, redirectScheme: redirectScheme, signature: signature, threeDS: threeDS)
+        if saveCard, final.state == .completed,
+           let savedCard = SavedCardPaymentKt.savedCardFromToken(token: token.kmp) {
+            // Fail-soft: the payment outcome is already decided; save() reports
+            // failure as a boolean, never a thrown error.
+            await savedCardStore.with { _ = $0.save(card: savedCard, consentGiven: true) }
+        }
+        return final
+    }
+
+    /// One-click payment with a previously saved card: the order is created directly from the
+    /// stored reusable token — no card re-entry, no CVV, no tokenization round-trip. 3DS behaves
+    /// exactly as in `pay(...)` (a challenge still fires when the bank requires it).
+    ///
+    /// On a final COMPLETED the card's recency is bumped (most-recently-used). If the gateway
+    /// reports the stored token as no longer usable, the card is purged from local storage and
+    /// `HiPayError.cardNoLongerValid` is thrown — fall back to card entry. A declined payment is
+    /// returned as a normal DECLINED transaction.
+    public func payWithSavedCard(
+        _ card: HiPaySavedCard,
+        orderId: String,
+        amount: String,
+        currency: String = "EUR",
+        description: String,
+        language: String = "en_GB",
+        redirectScheme: String,
+        authenticationIndicator: Int = 0,
+        signature: String? = nil,
+        customer: HiPayCustomerInfo? = nil,
+        shipping: HiPayCustomerInfo? = nil,
+        threeDS: HiPayThreeDSMode = .inAppSession
+    ) async throws -> HiPayTransaction {
+        isProcessing = true
+        defer { isProcessing = false }
+        let payment = HiPayPayment(configuration: configuration)
+        let tx: HiPayTransaction
+        do {
+            tx = try await payment.requestCardOrder(
+                orderId: orderId,
+                amount: amount,
+                currency: currency,
+                description: description,
+                language: language,
+                cardToken: card.kmp.token,
+                paymentProduct: SavedCardPaymentKt.savedCardPaymentProduct(card: card.kmp),
+                redirectScheme: redirectScheme,
+                authenticationIndicator: authenticationIndicator,
+                signature: signature,
+                customer: customer,
+                shipping: shipping,
+                oneClick: true
+            )
+        } catch let error as HiPayError {
+            if case .cardNoLongerValid = error {
+                // Definitive gateway verdict: purge the stale card, then surface the error.
+                await savedCardStore.with { _ = $0.delete(card: card.kmp) }
+            }
+            throw error
+        }
+        let final = try await resolve3DS(tx, redirectScheme: redirectScheme, signature: signature, threeDS: threeDS)
+        if final.state == .completed {
+            await savedCardStore.with { _ = $0.touch(card: card.kmp) }
+        }
+        return final
+    }
+
+    /// The cards previously saved for one-click payment (most recent first, expired cards purged).
+    public func savedCards() async -> [HiPaySavedCard] {
+        await savedCardStore.with { $0.list().map(HiPaySavedCard.init) }
+    }
+
+    /// 3DS resolution shared by `pay` and `payWithSavedCard` — behaviour unchanged from `pay`.
+    private func resolve3DS(
+        _ tx: HiPayTransaction,
+        redirectScheme: String,
+        signature: String?,
+        threeDS: HiPayThreeDSMode
+    ) async throws -> HiPayTransaction {
         // No 3DS → already final.
         guard tx.state == .forwarding, let url = tx.forwardUrl else {
             return tx
@@ -537,6 +623,29 @@ public final class HiPayCardEntryController: ObservableObject {
             return HiPayCardToken(kmpToken)
         } catch {
             throw HiPayError.from(error)
+        }
+    }
+}
+
+/// One saved-card store per controller, every access (creation included) serialized on a
+/// private queue: the KMP `SecureCardStore` is not thread-safe, and the store contract
+/// mandates off-main access. Not @MainActor on purpose — the queue IS the confinement.
+private final class SavedCardStoreBox {
+    private let queue = DispatchQueue(label: "com.hipay.card.savedcards")
+    private let configuration: HiPayConfiguration
+    private var store: SecureCardStore?
+
+    init(configuration: HiPayConfiguration) {
+        self.configuration = configuration
+    }
+
+    func with<T>(_ block: @escaping (SecureCardStore) -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                let store = self.store ?? createSecureCardStore(configuration: self.configuration)
+                self.store = store
+                continuation.resume(returning: block(store))
+            }
         }
     }
 }

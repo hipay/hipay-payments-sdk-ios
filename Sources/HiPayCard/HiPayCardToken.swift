@@ -4,7 +4,7 @@ import HiPayFullservice
 /// SDK by `HiPayCardEntryController.pay(...)` and never crosses to the host
 /// (which only ever sees a `HiPayTransaction`). The `maskedPan` is
 /// backend-masked. Kept as a typed carrier between tokenize and order creation.
-struct HiPayCardToken: Sendable {
+struct HiPayCardToken {
     let token: String
     let brand: String?
     let maskedPan: String?
@@ -14,8 +14,12 @@ struct HiPayCardToken: Sendable {
     let issuer: String?
     let country: String?
     let domesticNetwork: String?
+    /// The KMP token, kept so the saved-card mapping stays single-sourced in
+    /// Kotlin (`savedCardFromToken`). Never exposed outside the module.
+    let kmp: CardToken
 
     init(_ kmp: CardToken) {
+        self.kmp = kmp
         token = kmp.token
         brand = kmp.brand
         maskedPan = kmp.pan
