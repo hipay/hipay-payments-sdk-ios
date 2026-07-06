@@ -60,6 +60,11 @@ public final class HiPayCardEntryController: ObservableObject {
     /// Pay button with `!canPay || isProcessing`. Read-only — no integrator wiring needed.
     @Published public private(set) var isProcessing: Bool = false
 
+    /// Result of the most recent `pay(saveCard: true)` save attempt, for the host to react to
+    /// (e.g. a confirmation or a "card not saved" notice). `nil` when no save was attempted — a
+    /// fresh `pay(saveCard: true)` resets it, and it stays nil when the payment does not complete.
+    @Published public private(set) var lastSaveOutcome: HiPaySaveOutcome?
+
     private let configuration: HiPayConfiguration
 
     // MARK: - 3DS presentation (story 11.13)
@@ -396,6 +401,7 @@ public final class HiPayCardEntryController: ObservableObject {
         threeDS: HiPayThreeDSMode = .inAppSession,
         saveCard: Bool = false
     ) async throws -> HiPayTransaction {
+        if saveCard { lastSaveOutcome = nil }
         // Lock the fields for the whole flow (incl. the suspended 3DS); reset on every exit (11.14).
         isProcessing = true
         defer { isProcessing = false }
@@ -418,11 +424,15 @@ public final class HiPayCardEntryController: ObservableObject {
             shipping: shipping
         )
         let final = try await resolve3DS(tx, redirectScheme: redirectScheme, signature: signature, threeDS: threeDS)
-        if saveCard, final.state == .completed,
-           let savedCard = SavedCardPaymentKt.savedCardFromToken(token: token.kmp) {
-            // Fail-soft: the payment outcome is already decided; save() reports
-            // failure as a boolean, never a thrown error.
-            await savedCardStore.with { _ = $0.save(card: savedCard, consentGiven: true) }
+        if saveCard, final.state == .completed {
+            // Fail-soft: the payment outcome is already decided; save() reports failure as a
+            // boolean, never a thrown error. Record the outcome for the host (popup/confirmation).
+            if let savedCard = SavedCardPaymentKt.savedCardFromToken(token: token.kmp) {
+                let persisted = await savedCardStore.with { $0.save(card: savedCard, consentGiven: true) }
+                lastSaveOutcome = persisted ? .saved : .storageFailed
+            } else {
+                lastSaveOutcome = .notEligible
+            }
         }
         return final
     }

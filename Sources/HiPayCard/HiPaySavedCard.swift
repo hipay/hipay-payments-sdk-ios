@@ -2,7 +2,7 @@
 import HiPayFullservice
 
 /// A card the payer saved for one-click payment — the Swift face of the KMP
-/// `SavedCard` (D4: no Kotlin type on the public surface). Exposes ONLY the
+/// `SavedCard`, keeping Kotlin types off the public surface. Exposes ONLY the
 /// display metadata; the reusable payment token stays inside the SDK and is
 /// consumed by `HiPayCardEntryController.payWithSavedCard(_:...)`.
 public struct HiPaySavedCard: Identifiable, Equatable {

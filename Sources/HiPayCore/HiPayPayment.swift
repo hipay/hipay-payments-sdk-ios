@@ -66,8 +66,8 @@ public final class HiPayPayment {
         do {
             return HiPayTransaction(try await gateway.requestNewOrder(order: order, signature: signature))
         } catch {
-            // One-click: recognize the definitive invalid-token verdict (KMP
-            // classifier — single-sourced logic, D4: no logic in the facade).
+            // One-click: recognize the definitive invalid-token verdict via the KMP
+            // classifier — single-sourced logic, kept out of the facade.
             if oneClick,
                let kotlin = (error as NSError).userInfo["KotlinException"] as? HiPayException,
                let invalid = SavedCardPaymentKt.cardNoLongerValidOrNull(error: kotlin) {

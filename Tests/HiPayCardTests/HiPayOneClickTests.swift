@@ -66,5 +66,13 @@ final class HiPayOneClickTests: XCTestCase {
             holder: "J", expiryMonth: "01", expiryYear: "2030"
         )
         XCTAssertEqual("american-express", SavedCardPaymentKt.savedCardPaymentProduct(card: amex))
+        // Hardened default: an unrecognized stored brand falls back to visa only defensively
+        // (savedCardFromToken now refuses to persist such a card in the first place — covered
+        // by the shared Kotlin commonTest).
+        let unknown = SavedCard(
+            token: "t", maskedPan: "411111xxxxxx1111", network: "future-brand",
+            holder: "J", expiryMonth: "12", expiryYear: "2031"
+        )
+        XCTAssertEqual("visa", SavedCardPaymentKt.savedCardPaymentProduct(card: unknown))
     }
 }
