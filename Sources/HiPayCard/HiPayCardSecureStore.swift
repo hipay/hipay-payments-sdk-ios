@@ -20,10 +20,14 @@ let savedCardsLaunchedKey = "com.hipay.savedcards.launched"
 /// - transient status (e.g. `errSecInteractionNotAllowed` before the first unlock after boot —
 ///   real under the `AfterFirstUnlock` class) → nil WITHOUT deleting (the data is likely intact).
 ///
-/// LIMITATION (by design): the exported `write(value:)` returns void and a Swift error cannot
-/// cross into Kotlin frames (Kotlin/Native terminates on foreign exceptions), so a failed write
-/// cannot surface as `save() == false` the way the Kotlin primitives report it. To never serve a
-/// stale previous blob as current, a failed add/update deletes the item instead. Same for `clear()`.
+/// LIMITATION (by design): a Swift error cannot cross into Kotlin frames (Kotlin/Native
+/// terminates on foreign exceptions), so mutation failures cannot be signaled the way the Kotlin
+/// primitives report them:
+/// - a failed `write(value:)` is silent — the Kotlin store's `save()` may report true while the
+///   PREVIOUS blob (the last consistent state; SecItem operations are atomic) stays current;
+/// - a failed `clear()` is silent — `clearAll()` may report true while the item persists.
+/// Deletion verification is therefore the caller's duty: check `list()` is empty afterwards, on
+/// an unlocked device. (The SDK's public out-of-checkout deletion API performs that check.)
 final class HiPayCardSecureStore: NSObject, RawSecureStore {
 
     private let namespace: String
@@ -62,34 +66,53 @@ final class HiPayCardSecureStore: NSObject, RawSecureStore {
 
     func write(value: String) {
         let data = Data(value.utf8)
-        var status = SecItemUpdate(
-            baseQuery as CFDictionary,
-            [kSecValueData as String: data] as CFDictionary
-        )
+        var status = updateItem(data)
         if status == errSecItemNotFound {
             var attributes = baseQuery
             attributes[kSecValueData as String] = data
             attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             status = SecItemAdd(attributes as CFDictionary, nil)
+            if status == errSecDuplicateItem {
+                // Lost the add race against a concurrent writer — the item exists now: update it.
+                _ = updateItem(data)
+            }
         }
-        if status != errSecSuccess {
-            SecItemDelete(baseQuery as CFDictionary) // never leave a stale previous blob (see LIMITATION)
-        }
+        // On any other failure the previous blob stays: it is the last consistent state (SecItem
+        // operations are atomic). The failure itself cannot be signaled (see LIMITATION).
+    }
+
+    /// Update half of the upsert — re-asserts the protection class so pre-existing items (created
+    /// without it, or restored precisely because they lacked `ThisDeviceOnly`) get upgraded.
+    private func updateItem(_ data: Data) -> OSStatus {
+        SecItemUpdate(
+            baseQuery as CFDictionary,
+            [
+                kSecValueData as String: data,
+                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            ] as CFDictionary
+        )
     }
 
     func clear() {
-        SecItemDelete(baseQuery as CFDictionary) // errSecItemNotFound = already clear
+        // errSecItemNotFound = already clear; any other failure is silent (see LIMITATION).
+        SecItemDelete(baseQuery as CFDictionary)
     }
 }
 
 /// One-time sweep of every saved-card item (all namespaces) under the fixed service.
-func purgeAllSavedCardItems() {
+/// True iff the sweep is known complete (success, or nothing to purge).
+@discardableResult
+func purgeAllSavedCardItems() -> Bool {
     let query: [String: Any] = [
         kSecClass as String: kSecClassGenericPassword,
         kSecAttrService as String: savedCardsService,
     ]
-    SecItemDelete(query as CFDictionary) // errSecItemNotFound = nothing to purge
+    let status = SecItemDelete(query as CFDictionary)
+    return status == errSecSuccess || status == errSecItemNotFound
 }
+
+/// Serializes the first-launch check-purge-arm section across concurrent factory calls.
+private let firstLaunchLock = NSLock()
 
 /// Assemble a ready `SecureCardStore` for iOS-native: the Keychain `HiPayCardSecureStore` + a
 /// `Calendar`-based clock. Runs a one-time first-launch purge of ALL namespaces — the iOS Keychain
@@ -100,13 +123,19 @@ func purgeAllSavedCardItems() {
 /// thread-safe).
 public func createSecureCardStore(configuration: HiPayConfiguration) -> SecureCardStore {
     let defaults = UserDefaults.standard
-    if !defaults.bool(forKey: savedCardsLaunchedKey) {
-        purgeAllSavedCardItems()
+    firstLaunchLock.lock()
+    // The flag is armed ONLY after a successful sweep: a transient failure (e.g. a background
+    // first launch before the device's first unlock) leaves it unset, so the purge retries on
+    // the next launch instead of latching stale items in forever.
+    if !defaults.bool(forKey: savedCardsLaunchedKey), purgeAllSavedCardItems() {
         defaults.set(true, forKey: savedCardsLaunchedKey)
     }
+    firstLaunchLock.unlock()
     let namespace = RawSecureStoreKt.secureCardStoreNamespace(config: configuration.kmpConfig)
     return SecureCardStore(raw: HiPayCardSecureStore(namespace: namespace)) {
-        let components = Calendar.current.dateComponents([.year, .month], from: Date())
+        // Pinned Gregorian: the user's calendar (Thai Buddhist year 2569, Japanese era…) would put
+        // the year outside the store's plausibility window and silently disable the expiry purge.
+        let components = Calendar(identifier: .gregorian).dateComponents([.year, .month], from: Date())
         return YearMonth(year: Int32(components.year ?? 0), month: Int32(components.month ?? 0))
     }
 }

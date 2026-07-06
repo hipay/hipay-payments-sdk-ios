@@ -10,7 +10,11 @@ approach for Keychain-touching libraries.
 - `HiPayCardTests` — unit-test bundle over `../Tests/HiPayCardTests`, linked against the local
   SPM package (`HiPayCard` + `HiPayCore`).
 
-Run (any booted or bootable iOS simulator; **never** a macOS destination — that would hit the
+Requires **Xcode 16+** (the project uses `objectVersion = 77` with filesystem-synchronized
+groups). Prefer a **dedicated test simulator**: the first-launch-purge test sweeps every
+saved-card Keychain item visible to the process.
+
+Run on any booted/bootable iOS simulator — **never** a macOS destination (that would hit the
 macOS keychain, which has different semantics):
 
 ```bash
@@ -18,5 +22,5 @@ macOS keychain, which has different semantics):
 ../../scripts/build-xcframework.sh
 
 xcodebuild test -project TestHost.xcodeproj -scheme HiPayCardTestHost \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+  -destination 'platform=iOS Simulator,name=<any simulator, e.g. iPhone 17 Pro>'
 ```

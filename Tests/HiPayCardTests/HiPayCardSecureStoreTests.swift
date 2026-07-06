@@ -84,6 +84,8 @@ final class HiPayCardSecureStoreTests: XCTestCase {
         )
     }
 
+    // CAUTION: this test sweeps EVERY item under the fixed saved-cards service in the process's
+    // Keychain — run the suite on dedicated test simulators, not one holding real demo data.
     func test_first_launch_purge_clears_every_namespace_once() {
         let configuration = HiPayConfiguration(username: "test-user", password: "pw", environment: .stage)
         let configStore = HiPayCardSecureStore(namespace: testConfigNamespace)
@@ -91,7 +93,12 @@ final class HiPayCardSecureStoreTests: XCTestCase {
         let hadFlag = defaults.bool(forKey: savedCardsLaunchedKey)
         defer {
             configStore.clear()
-            if hadFlag { defaults.set(true, forKey: savedCardsLaunchedKey) }
+            // Symmetric restore: leave the flag exactly as found (absent stays absent).
+            if hadFlag {
+                defaults.set(true, forKey: savedCardsLaunchedKey)
+            } else {
+                defaults.removeObject(forKey: savedCardsLaunchedKey)
+            }
         }
 
         defaults.removeObject(forKey: savedCardsLaunchedKey)
@@ -112,7 +119,31 @@ final class HiPayCardSecureStoreTests: XCTestCase {
         XCTAssertTrue(secureStore.list().isEmpty) // fresh namespace + real clock: no crash, no cards
     }
 
+    func test_write_asserts_the_protection_class_even_on_a_preexisting_item() {
+        seedRawBytes(Data("seeded".utf8)) // raw item WITHOUT the accessibility attribute
+        store.write(value: "updated")
+        XCTAssertEqual("updated", store.read())
+        XCTAssertEqual(
+            kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String,
+            rawAccessibleAttribute()
+        )
+    }
+
     // MARK: - raw Keychain access (bypasses the store)
+
+    /// The item's `kSecAttrAccessible` value as stored, or nil if the item is absent.
+    private func rawAccessibleAttribute() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: savedCardsService,
+            kSecAttrAccount as String: namespace,
+            kSecReturnAttributes as String: true,
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let attributes = result as? [String: Any] else { return nil }
+        return attributes[kSecAttrAccessible as String] as? String
+    }
 
     private func seedRawBytes(_ data: Data) {
         let attributes: [String: Any] = [
