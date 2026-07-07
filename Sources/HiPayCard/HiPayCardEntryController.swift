@@ -65,6 +65,48 @@ public final class HiPayCardEntryController: ObservableObject {
     /// fresh `pay(saveCard: true)` resets it, and it stays nil when the payment does not complete.
     @Published public private(set) var lastSaveOutcome: HiPaySaveOutcome?
 
+    // MARK: - One-click UI state (rendered by HiPayCardEntryView only when opted in)
+
+    /// Explicit integrator opt-in for the one-click (saved cards) UI — off by default: without it
+    /// the component renders and behaves exactly as before and no card store is ever created.
+    public let oneClickEnabled: Bool
+
+    /// The saved card offered for one-click (most recently used/saved); nil when none/not loaded.
+    @Published public private(set) var savedCard: HiPaySavedCard?
+
+    /// True when the saved card is the active selection (entry fields collapsed). Exactly one of
+    /// {saved card, new card} is selected at all times once a card exists.
+    @Published public private(set) var isSavedCardSelected = false
+
+    /// The in-frame "save this card" switch state (consent) — default OFF, reset after each
+    /// successful save (consent is per-transaction).
+    @Published public private(set) var saveCardOptIn = false
+
+    /// Select the saved card (collapses the entry fields — their values are preserved).
+    public func selectSavedCard() {
+        if savedCard != nil { isSavedCardSelected = true }
+    }
+
+    /// Select the new-card branch (expands the entry fields).
+    public func selectNewCard() {
+        isSavedCardSelected = false
+    }
+
+    /// Save-switch handler (called from the component's toggle).
+    public func onSaveCardOptInChange(_ optIn: Bool) {
+        saveCardOptIn = optIn
+    }
+
+    /// (Re)loads the saved card and resets the selection to it (MRU pre-selected; none → new
+    /// card). Called by the component on appearance and by the pay flows on terminal outcomes;
+    /// no-op (and no store created) unless ``oneClickEnabled``.
+    public func refreshSavedCards() async {
+        guard oneClickEnabled else { return }
+        let first = await savedCardStore.with { $0.list().first }
+        savedCard = first.map(HiPaySavedCard.init)
+        isSavedCardSelected = first != nil
+    }
+
     private let configuration: HiPayConfiguration
 
     // MARK: - 3DS presentation (story 11.13)
@@ -96,10 +138,12 @@ public final class HiPayCardEntryController: ObservableObject {
 
     public init(
         configuration: HiPayConfiguration,
-        allowedNetworks: [HiPayCardNetwork] = []
+        allowedNetworks: [HiPayCardNetwork] = [],
+        oneClickEnabled: Bool = false
     ) {
         self.configuration = configuration
         self.allowedNetworks = allowedNetworks
+        self.oneClickEnabled = oneClickEnabled
     }
 
     /// The host picks one of `networks` (co-branding choice). Ignored if the
@@ -362,14 +406,16 @@ public final class HiPayCardEntryController: ObservableObject {
     }
 
     /// True when every required field is filled and valid — drive the host's
-    /// pay button with this (`.disabled(!controller.canPay)`).
+    /// pay button with this (`.disabled(!controller.canPay)`). A selected saved
+    /// card is always payable — field state is irrelevant on that branch.
     public var canPay: Bool {
-        !holder.isEmpty
-            && CardValidators.shared.isCardNumberValid(number: panDigits)
-            && isExpiryComplete
-            && CardValidators.shared.isExpiryDateValid(month: expiryMonth, year: expiryYear)
-            && isCvcComplete
-            && isNetworkAuthorized // story 5.7: block pay on a disallowed network
+        (oneClickEnabled && isSavedCardSelected && savedCard != nil)
+            || (!holder.isEmpty
+                && CardValidators.shared.isCardNumberValid(number: panDigits)
+                && isExpiryComplete
+                && CardValidators.shared.isExpiryDateValid(month: expiryMonth, year: expiryYear)
+                && isCvcComplete
+                && isNetworkAuthorized) // a disallowed network blocks pay
     }
 
     /// Tokenizes the entered card, creates the order, and returns the
@@ -401,13 +447,41 @@ public final class HiPayCardEntryController: ObservableObject {
         threeDS: HiPayThreeDSMode = .inAppSession,
         saveCard: Bool = false
     ) async throws -> HiPayTransaction {
-        if saveCard { lastSaveOutcome = nil }
+        // One-click routing: with the saved card selected, the same host call pays via the
+        // stored token — no tokenization, no CVV; the host's single touch-point is preserved.
+        if oneClickEnabled, isSavedCardSelected, let routedCard = savedCard {
+            do {
+                let final = try await payWithSavedCard(
+                    routedCard,
+                    orderId: orderId,
+                    amount: amount,
+                    currency: currency,
+                    description: description,
+                    language: language,
+                    redirectScheme: redirectScheme,
+                    authenticationIndicator: authenticationIndicator,
+                    signature: signature,
+                    customer: customer,
+                    shipping: shipping,
+                    threeDS: threeDS
+                )
+                if final.state == .completed { await refreshSavedCards() }
+                return final
+            } catch let error as HiPayError {
+                // The purged card must leave the UI and the selection falls back to entry.
+                if case .cardNoLongerValid = error { await refreshSavedCards() }
+                throw error
+            }
+        }
+        // The component's save switch and the parameter express the same consent.
+        let effectiveSave = saveCard || (oneClickEnabled && saveCardOptIn)
+        if effectiveSave { lastSaveOutcome = nil }
         // Lock the fields for the whole flow (incl. the suspended 3DS); reset on every exit (11.14).
         isProcessing = true
         defer { isProcessing = false }
         // Capture the chosen network BEFORE tokenize() clears the component state.
         let paymentProduct = selectedNetwork?.paymentProductCode ?? "visa"
-        let token = try await tokenize(multiUse: saveCard)
+        let token = try await tokenize(multiUse: effectiveSave)
         let payment = HiPayPayment(configuration: configuration)
         let tx = try await payment.requestCardOrder(
             orderId: orderId,
@@ -424,15 +498,17 @@ public final class HiPayCardEntryController: ObservableObject {
             shipping: shipping
         )
         let final = try await resolve3DS(tx, redirectScheme: redirectScheme, signature: signature, threeDS: threeDS)
-        if saveCard, final.state == .completed {
+        if effectiveSave, final.state == .completed {
             // Fail-soft: the payment outcome is already decided; save() reports failure as a
             // boolean, never a thrown error. Record the outcome for the host (popup/confirmation).
-            if let savedCard = SavedCardPaymentKt.savedCardFromToken(token: token.kmp) {
-                let persisted = await savedCardStore.with { $0.save(card: savedCard, consentGiven: true) }
+            if let newSavedCard = SavedCardPaymentKt.savedCardFromToken(token: token.kmp) {
+                let persisted = await savedCardStore.with { $0.save(card: newSavedCard, consentGiven: true) }
                 lastSaveOutcome = persisted ? .saved : .storageFailed
             } else {
                 lastSaveOutcome = .notEligible
             }
+            saveCardOptIn = false // consent is per-transaction
+            await refreshSavedCards() // the new card appears, pre-selected for the next payment
         }
         return final
     }

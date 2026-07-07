@@ -22,3 +22,9 @@
 "ERROR_INCOMPLETE_CVV" = "Code de sécurité incomplet";
 "ERROR_HOLDER_TOO_LONG" = "Nom du titulaire trop long";
 "ERROR_NETWORK_NOT_AUTHORIZED" = "Ce réseau de carte n'est pas accepté";
+"LABEL_SAVED_CARDS" = "Cartes enregistrées";
+"LABEL_NEW_CARD" = "Nouvelle carte";
+"LABEL_SAVE_CARD" = "Enregistrer cette carte";
+/* Draft consent copy — final legal wording validated later with the merchant privacy slot. */
+"CONSENT_SAVE_CARD" = "Enregistrer cette carte pour payer plus vite. Vous pourrez la supprimer à tout moment.";
+"A11Y_SAVED_CARD" = "%1$@ se terminant par %2$@, expire %3$@";

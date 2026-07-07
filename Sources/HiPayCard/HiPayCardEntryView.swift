@@ -60,8 +60,19 @@ public struct HiPayCardEntryView: View {
     // The TextFields bind the raw @Published values; formatting is re-applied
     // from .onChange via the controller's *Edited() handlers — a write from
     // the binding setter or a didSet only renders on focus loss (iOS 15/16).
+    // With the saved card selected, the entry fields are not rendered — their values stay in
+    // the controller (nothing is cleared until a payment succeeds).
+    private var showEntryFields: Bool {
+        !(controller.oneClickEnabled && controller.isSavedCardSelected)
+    }
+
     public var body: some View {
         VStack(spacing: 12) {
+            if controller.oneClickEnabled, controller.savedCard != nil {
+                savedCardsSections
+                    .accessibilitySortPriority(order(5))
+            }
+            if showEntryFields {
             // Holder
             VStack(alignment: .leading, spacing: 4) {
                 TextField(loc(.placeholderHolder), text: $controller.holder)
@@ -163,7 +174,16 @@ public struct HiPayCardEntryView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("hipay.card.cvc.tooltip")
             }
+            // In-frame save switch + one-line consent — the new-card branch of one-click only.
+            if controller.oneClickEnabled {
+                saveCardSwitch
+            }
+            } // showEntryFields
         }
+        // One-click: load the saved card on appearance (no-op unless opted in — fail-soft).
+        .task { await controller.refreshSavedCards() }
+        // Simple platform-standard expand/collapse when the selection changes.
+        .animation(.default, value: controller.isSavedCardSelected)
         // Single blur detector for all fields: when focus leaves a field, mark it
         // blurred (reveals its inline error) and announce the error politely once.
         .onChange(of: focus) { newFocus in
@@ -177,6 +197,102 @@ public struct HiPayCardEntryView: View {
         // the controller sets isProcessing across pay() (incl. the 3DS round-trip), no host wiring.
         // SwiftUI cascades .disabled to children and composes with each field's own .disabled.
         .disabled(controller.isProcessing)
+    }
+
+    // MARK: - One-click sections (shared header treatment; no radio indicator by design)
+
+    /// The two one-click zones: "Saved cards" (header + the saved-card cell, selection = border)
+    /// and "New card" (an actionable header whose chevron shows the expanded state). Exactly one
+    /// is selected at all times; VoiceOver reads the localized card label — never the bullets.
+    @ViewBuilder private var savedCardsSections: some View {
+        if let card = controller.savedCard {
+            let display = SavedCardDisplayKt.savedCardDisplay(card: card.kmp)
+            let platformNetwork = display.network.flatMap { HiPayCardNetwork($0) }
+            let a11yLabel = String(
+                format: loc(.a11ySavedCard),
+                platformNetwork?.displayName ?? card.network,
+                display.last4,
+                display.displayExpiry
+            )
+            let selected = controller.isSavedCardSelected
+            VStack(alignment: .leading, spacing: 12) {
+                sectionHeader(loc(.labelSavedCards))
+                Button { controller.selectSavedCard() } label: {
+                    HStack(spacing: 10) {
+                        Image(platformNetwork?.assetName ?? HiPayCardNetwork.neutralAssetName, bundle: .module)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 32, height: 20)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(display.maskedNumber)
+                                .font(.body.monospaced())
+                                .foregroundColor(.primary)
+                            Text("\(card.holder)  ·  \(display.displayExpiry)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(10)
+                    .frame(minHeight: 44)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(
+                                selected ? Color.accentColor : Color.secondary.opacity(0.4),
+                                lineWidth: selected ? 1.8 : 1
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(a11yLabel)
+                .accessibilityAddTraits(selected ? [.isSelected] : [])
+                .accessibilityIdentifier("hipay.card.savedcard")
+                // "New card": same header treatment, actionable, chevron = expanded state.
+                Button { controller.selectNewCard() } label: {
+                    HStack {
+                        sectionHeader(loc(.labelNewCard))
+                        Spacer()
+                        Text(selected ? "▸" : "▾")
+                            .font(.callout)
+                            .foregroundColor(selected ? .secondary : .accentColor)
+                            .accessibilityHidden(true) // decorative: the button state carries the meaning
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? [] : [.isSelected])
+                .accessibilityIdentifier("hipay.card.newcard")
+            }
+        }
+    }
+
+    /// The shared one-click section-header treatment.
+    private func sectionHeader(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(.caption.weight(.semibold))
+            .foregroundColor(.secondary)
+            .lineLimit(1)
+    }
+
+    /// In-frame "save this card" switch (consent, default OFF) + one-line consent text.
+    private var saveCardSwitch: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle(isOn: Binding(
+                get: { controller.saveCardOptIn },
+                set: { controller.onSaveCardOptInChange($0) }
+            )) {
+                Text(loc(.labelSaveCard))
+            }
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("hipay.card.saveswitch")
+            Text(loc(.consentSaveCard))
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("hipay.card.consent")
+        }
     }
 
     // Inline error slot under a field: icon + text (NOT colour-only, WCAG 1.4.1).

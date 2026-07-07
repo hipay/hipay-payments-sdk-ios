@@ -74,4 +74,7 @@ public enum HiPayCardNetwork: String, Sendable, CaseIterable {
         case .bcmc: return "HPBcmc"
         }
     }
+
+    /// The neutral (unbranded) card asset — the fallback when no network resolves.
+    static let neutralAssetName = "HPCardNeutral"
 }
