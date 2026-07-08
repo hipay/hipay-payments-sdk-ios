@@ -33,6 +33,9 @@ public struct HiPayCardEntryView: View {
     @State private var lastAnnounced: [HiPayCardEntryController.Field: String] = [:]
     // CVV info tooltip presentation (story 5.6).
     @State private var showCvvInfo = false
+    // Saved-cards list expand/collapse (only meaningful in the new-card branch with >1 card):
+    // while entering a new card the list collapses to the most-recent card; this re-expands it.
+    @State private var savedCardsExpanded = false
 
     public init(
         controller: HiPayCardEntryController,
@@ -204,75 +207,115 @@ public struct HiPayCardEntryView: View {
 
     // MARK: - One-click sections (shared header treatment; no radio indicator by design)
 
-    /// The two one-click zones: "Saved cards" (header + the saved-card cell, selection = border)
-    /// and "New card" (an actionable header whose chevron shows the expanded state). Exactly one
-    /// is selected at all times; VoiceOver reads the localized card label — never the bullets.
+    /// The two one-click zones: "Saved cards" (the list of ≤3 saved cards, most-recent first,
+    /// selection = border) and "New card" (an actionable header whose chevron shows the expanded
+    /// state). Exactly one selection at all times; VoiceOver reads the localized card label — never
+    /// the bullets. While the new-card branch is active the list collapses to the most-recent card
+    /// and the "Saved cards" header gains its own chevron to re-expand (single card → no collapse).
     @ViewBuilder private var savedCardsSections: some View {
-        // Render the SELECTED card if one is picked, else the most-recent (the cell then reads as
-        // not-selected while the new-card branch is active).
-        if let card = controller.selectedSavedCard ?? controller.savedCards.first {
-            let display = SavedCardDisplayKt.savedCardDisplay(card: card.kmp)
-            let platformNetwork = display.network.flatMap { HiPayCardNetwork($0) }
-            let a11yLabel = String(
-                format: loc(.a11ySavedCard),
-                platformNetwork?.displayName ?? card.network,
-                display.last4,
-                display.displayExpiry
-            )
-            let selected = controller.selectedSavedCard == card
+        if !controller.savedCards.isEmpty {
+            let cards = controller.savedCards
+            let newCardBranch = controller.selectedSavedCard == nil
+            let collapsible = newCardBranch && cards.count > 1
+            let showAllCards = !newCardBranch || savedCardsExpanded
+            let visibleCards = showAllCards ? cards : Array(cards.prefix(1))
             VStack(alignment: .leading, spacing: 12) {
-                sectionHeader(loc(.labelSavedCards))
-                Button { controller.selectSavedCard(card) } label: {
-                    HStack(spacing: 10) {
-                        Image(platformNetwork?.assetName ?? HiPayCardNetwork.neutralAssetName, bundle: .module)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 32, height: 20)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(display.maskedNumber)
-                                .font(.body.monospaced())
-                                .foregroundColor(.primary)
-                            Text("\(card.holder)  ·  \(display.displayExpiry)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(10)
-                    .frame(minHeight: 44)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(
-                                selected ? Color.accentColor : Color.secondary.opacity(0.4),
-                                lineWidth: selected ? 1.8 : 1
-                            )
-                    )
+                if collapsible {
+                    savedCardsCollapsibleHeader
+                } else {
+                    sectionHeader(loc(.labelSavedCards))
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(a11yLabel)
-                .accessibilityAddTraits(selected ? [.isSelected] : [])
-                .accessibilityIdentifier("hipay.card.savedcard")
-                // "New card": same header treatment, an actionable BUTTON whose expanded/collapsed
-                // value (not a radio selection) carries the meaning; the chevron mirrors it.
-                Button { controller.selectNewCard() } label: {
-                    HStack {
-                        sectionHeader(loc(.labelNewCard))
-                        Spacer()
-                        Text(selected ? "▸" : "▾")
-                            .font(.callout)
-                            .foregroundColor(selected ? .secondary : .accentColor)
-                            .accessibilityHidden(true) // decorative: the button value carries the meaning
-                    }
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
+                ForEach(Array(visibleCards.enumerated()), id: \.offset) { index, card in
+                    savedCardCell(card, index: index)
                 }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(.isButton)
-                .accessibilityValue(selected ? loc(.a11yCollapsed) : loc(.a11yExpanded))
-                .accessibilityIdentifier("hipay.card.newcard")
+                newCardHeader
             }
         }
+    }
+
+    /// One saved-card cell: 2-line masked display, border-only selection (no radio), merged label.
+    private func savedCardCell(_ card: HiPaySavedCard, index: Int) -> some View {
+        let display = SavedCardDisplayKt.savedCardDisplay(card: card.kmp)
+        let platformNetwork = display.network.flatMap { HiPayCardNetwork($0) }
+        let a11yLabel = String(
+            format: loc(.a11ySavedCard),
+            platformNetwork?.displayName ?? card.network,
+            display.last4,
+            display.displayExpiry
+        )
+        let selected = controller.selectedSavedCard == card
+        return Button { controller.selectSavedCard(card) } label: {
+            HStack(spacing: 10) {
+                Image(platformNetwork?.assetName ?? HiPayCardNetwork.neutralAssetName, bundle: .module)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 32, height: 20)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(display.maskedNumber)
+                        .font(.body.monospaced())
+                        .foregroundColor(.primary)
+                    Text("\(card.holder)  ·  \(display.displayExpiry)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .frame(minHeight: 44)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(
+                        selected ? Color.accentColor : Color.secondary.opacity(0.4),
+                        lineWidth: selected ? 1.8 : 1
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(a11yLabel)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+        .accessibilityIdentifier("hipay.card.savedcard.\(index)")
+    }
+
+    /// "New card": an actionable BUTTON whose expanded/collapsed value carries the meaning.
+    private var newCardHeader: some View {
+        let expanded = controller.selectedSavedCard == nil
+        return Button { controller.selectNewCard() } label: {
+            HStack {
+                sectionHeader(loc(.labelNewCard))
+                Spacer()
+                Text(expanded ? "▾" : "▸")
+                    .font(.callout)
+                    .foregroundColor(expanded ? .accentColor : .secondary)
+                    .accessibilityHidden(true) // decorative: the button value carries the meaning
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(expanded ? loc(.a11yExpanded) : loc(.a11yCollapsed))
+        .accessibilityIdentifier("hipay.card.newcard")
+    }
+
+    /// "Saved cards" header, collapsible in the new-card branch: a button re-expanding the list.
+    private var savedCardsCollapsibleHeader: some View {
+        Button { withAnimation { savedCardsExpanded.toggle() } } label: {
+            HStack {
+                sectionHeader(loc(.labelSavedCards))
+                Spacer()
+                Text(savedCardsExpanded ? "▾" : "▸")
+                    .font(.callout)
+                    .foregroundColor(savedCardsExpanded ? .accentColor : .secondary)
+                    .accessibilityHidden(true) // decorative: the button value carries the meaning
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(savedCardsExpanded ? loc(.a11yExpanded) : loc(.a11yCollapsed))
+        .accessibilityIdentifier("hipay.card.savedcards.header")
     }
 
     /// The shared one-click section-header treatment.
