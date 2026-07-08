@@ -69,27 +69,32 @@ public final class HiPayCardEntryController: ObservableObject {
 
     /// Explicit integrator opt-in for the one-click (saved cards) UI — off by default: without it
     /// the component renders and behaves exactly as before and no card store is ever created.
+    /// Headless-host note: once ``refreshSavedCards()`` has pre-selected a saved card, a plain
+    /// ``pay(orderId:amount:currency:description:language:redirectScheme:authenticationIndicator:signature:customer:shipping:threeDS:saveCard:)``
+    /// routes to that stored token (no CVV) — call ``selectNewCard()`` first to force card entry.
     public let oneClickEnabled: Bool
 
-    /// The saved card offered for one-click (most recently used/saved); nil when none/not loaded.
-    @Published public private(set) var savedCard: HiPaySavedCard?
+    /// The saved cards offered for one-click, most recently used/saved first (expired cards
+    /// purged); empty when none or not loaded. Refreshed via ``refreshSavedCards()``.
+    @Published public private(set) var savedCards: [HiPaySavedCard] = []
 
-    /// True when the saved card is the active selection (entry fields collapsed). Exactly one of
-    /// {saved card, new card} is selected at all times once a card exists.
-    @Published public private(set) var isSavedCardSelected = false
+    /// The active selection: a saved card (entry fields collapsed, values preserved) or nil =
+    /// the new-card branch. Never points outside ``savedCards``.
+    @Published public private(set) var selectedSavedCard: HiPaySavedCard?
 
     /// The in-frame "save this card" switch state (consent) — default OFF, reset after each
     /// successful save (consent is per-transaction).
     @Published public private(set) var saveCardOptIn = false
 
-    /// Select the saved card (collapses the entry fields — their values are preserved).
-    public func selectSavedCard() {
-        if savedCard != nil { isSavedCardSelected = true }
+    /// Select `card` (collapses the entry fields — their values are preserved). Ignored when the
+    /// card is not one of ``savedCards``.
+    public func selectSavedCard(_ card: HiPaySavedCard) {
+        if savedCards.contains(card) { selectedSavedCard = card }
     }
 
     /// Select the new-card branch (expands the entry fields).
     public func selectNewCard() {
-        isSavedCardSelected = false
+        selectedSavedCard = nil
     }
 
     /// Save-switch handler (called from the component's toggle).
@@ -97,14 +102,43 @@ public final class HiPayCardEntryController: ObservableObject {
         saveCardOptIn = optIn
     }
 
-    /// (Re)loads the saved card and resets the selection to it (MRU pre-selected; none → new
-    /// card). Called by the component on appearance and by the pay flows on terminal outcomes;
-    /// no-op (and no store created) unless ``oneClickEnabled``.
+    // True once the first load has run: the first load pre-selects the most recent card; later
+    // re-appearance loads must NOT (they preserve the payer's current choice — see `reload`).
+    private var hasLoadedOnce = false
+
+    /// (Re)loads ``savedCards`` for the component. Called on appearance and on each re-appearance.
+    /// The selection is PRESERVED across a reload when it still resolves to a present card (a
+    /// re-appearance must never silently switch the payer back to a stored card after they picked
+    /// "new card"); the most recent card is pre-selected only on the very first load. No-op (and
+    /// no store created) unless ``oneClickEnabled``. Headless-host note: this pre-selection makes a
+    /// subsequent plain `pay(...)` route to the stored token — call ``selectNewCard()`` to opt back
+    /// into card entry.
     public func refreshSavedCards() async {
+        await reload(reselectMostRecent: false)
+    }
+
+    /// Core (re)load. `reselectMostRecent` forces the most-recent card back into the selection
+    /// (first load, and after a save / one-click payment); otherwise a still-present selection is
+    /// kept and a vanished one (e.g. a purged card) falls back to the new-card branch.
+    private func reload(reselectMostRecent: Bool) async {
         guard oneClickEnabled else { return }
-        let first = await savedCardStore.with { $0.list().first }
-        savedCard = first.map(HiPaySavedCard.init)
-        isSavedCardSelected = first != nil
+        let kmpCards = await savedCardStore.with { $0.list() }
+        // Keep only cards whose resolved network the merchant accepts (empty allow-list → all).
+        let filtered = kmpCards.filter { card in
+            guard let net = CardNetworks.shared.fromApiBrand(brand: card.network) else { return true }
+            return AllowedNetworks.shared.isAuthorized(network: net, allowed: allowedKmp)
+        }
+        let cards = filtered.map(HiPaySavedCard.init)
+        let firstLoad = !hasLoadedOnce
+        hasLoadedOnce = true
+        savedCards = cards
+        if reselectMostRecent || firstLoad {
+            selectedSavedCard = cards.first
+        } else if let prev = selectedSavedCard {
+            // Keep the current selection if it still resolves; a vanished card → new-card branch.
+            selectedSavedCard = cards.first { $0 == prev }
+        }
+        // else: the payer had chosen "new card" (nil) — leave it untouched.
     }
 
     private let configuration: HiPayConfiguration
@@ -409,7 +443,7 @@ public final class HiPayCardEntryController: ObservableObject {
     /// pay button with this (`.disabled(!controller.canPay)`). A selected saved
     /// card is always payable — field state is irrelevant on that branch.
     public var canPay: Bool {
-        (oneClickEnabled && isSavedCardSelected && savedCard != nil)
+        (oneClickEnabled && selectedSavedCard != nil)
             || (!holder.isEmpty
                 && CardValidators.shared.isCardNumberValid(number: panDigits)
                 && isExpiryComplete
@@ -447,31 +481,28 @@ public final class HiPayCardEntryController: ObservableObject {
         threeDS: HiPayThreeDSMode = .inAppSession,
         saveCard: Bool = false
     ) async throws -> HiPayTransaction {
-        // One-click routing: with the saved card selected, the same host call pays via the
+        // One-click routing: with a saved card selected, the same host call pays via the
         // stored token — no tokenization, no CVV; the host's single touch-point is preserved.
-        if oneClickEnabled, isSavedCardSelected, let routedCard = savedCard {
-            do {
-                let final = try await payWithSavedCard(
-                    routedCard,
-                    orderId: orderId,
-                    amount: amount,
-                    currency: currency,
-                    description: description,
-                    language: language,
-                    redirectScheme: redirectScheme,
-                    authenticationIndicator: authenticationIndicator,
-                    signature: signature,
-                    customer: customer,
-                    shipping: shipping,
-                    threeDS: threeDS
-                )
-                if final.state == .completed { await refreshSavedCards() }
-                return final
-            } catch let error as HiPayError {
-                // The purged card must leave the UI and the selection falls back to entry.
-                if case .cardNoLongerValid = error { await refreshSavedCards() }
-                throw error
-            }
+        if oneClickEnabled, let routedCard = selectedSavedCard {
+            // A one-click payment saves nothing — clear any stale outcome from an earlier
+            // new-card pay so the host never reads a save result against this transaction.
+            lastSaveOutcome = nil
+            // payWithSavedCard refreshes the saved-card state itself, inside its processing lock,
+            // on COMPLETED and on cardNoLongerValid — so there is no post-unlock double-tap window.
+            return try await payWithSavedCard(
+                routedCard,
+                orderId: orderId,
+                amount: amount,
+                currency: currency,
+                description: description,
+                language: language,
+                redirectScheme: redirectScheme,
+                authenticationIndicator: authenticationIndicator,
+                signature: signature,
+                customer: customer,
+                shipping: shipping,
+                threeDS: threeDS
+            )
         }
         // The component's save switch and the parameter express the same consent.
         let effectiveSave = saveCard || (oneClickEnabled && saveCardOptIn)
@@ -508,7 +539,7 @@ public final class HiPayCardEntryController: ObservableObject {
                 lastSaveOutcome = .notEligible
             }
             saveCardOptIn = false // consent is per-transaction
-            await refreshSavedCards() // the new card appears, pre-selected for the next payment
+            await reload(reselectMostRecent: true) // the new card appears, pre-selected for the next payment
         }
         return final
     }
@@ -559,19 +590,20 @@ public final class HiPayCardEntryController: ObservableObject {
             if case .cardNoLongerValid = error {
                 // Definitive gateway verdict: purge the stale card, then surface the error.
                 await savedCardStore.with { _ = $0.delete(card: card.kmp) }
+                // Refresh inside the processing lock (the defer below still holds it), so the purged
+                // card is gone and the selection has fallen back to new-card before the host unlocks.
+                await reload(reselectMostRecent: false)
             }
             throw error
         }
         let final = try await resolve3DS(tx, redirectScheme: redirectScheme, signature: signature, threeDS: threeDS)
         if final.state == .completed {
             await savedCardStore.with { _ = $0.touch(card: card.kmp) }
+            // Refresh inside the lock (the touched card is now MRU and re-selected) so there is no
+            // post-unlock double-tap window on the store read.
+            await reload(reselectMostRecent: true)
         }
         return final
-    }
-
-    /// The cards previously saved for one-click payment (most recent first, expired cards purged).
-    public func savedCards() async -> [HiPaySavedCard] {
-        await savedCardStore.with { $0.list().map(HiPaySavedCard.init) }
     }
 
     /// 3DS resolution shared by `pay` and `payWithSavedCard` — behaviour unchanged from `pay`.

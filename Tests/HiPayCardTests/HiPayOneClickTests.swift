@@ -43,19 +43,24 @@ final class HiPayOneClickTests: XCTestCase {
         XCTAssertEqual("411111xxxxxx1111|12|2031", wrapped.id)
     }
 
-    func test_savedCards_returns_the_persisted_cards_wrapped() async {
+    @MainActor
+    func test_refresh_loadsAndPreselectsThePersistedCard() async {
         XCTAssertTrue(makeStore().save(card: seededCard(), consentGiven: true))
-        let controller = await HiPayCardEntryController(configuration: configuration)
-        let cards = await controller.savedCards()
-        XCTAssertEqual(1, cards.count)
-        XCTAssertEqual("411111xxxxxx1111", cards.first?.maskedPan)
+        let controller = HiPayCardEntryController(configuration: configuration, oneClickEnabled: true)
+        await controller.refreshSavedCards()
+        XCTAssertEqual(1, controller.savedCards.count)
+        XCTAssertEqual("411111xxxxxx1111", controller.savedCards.first?.maskedPan)
+        XCTAssertEqual(controller.selectedSavedCard, controller.savedCards.first)
+        XCTAssertTrue(controller.canPay) // one tap away, fields empty
     }
 
-    func test_savedCards_is_empty_on_a_fresh_namespace() async {
-        _ = makeStore().clearAll()
-        let controller = await HiPayCardEntryController(configuration: configuration)
-        let cards = await controller.savedCards()
-        XCTAssertTrue(cards.isEmpty)
+    @MainActor
+    func test_refresh_withoutOptIn_isANoOp_andNothingLoads() async {
+        XCTAssertTrue(makeStore().save(card: seededCard(), consentGiven: true))
+        let controller = HiPayCardEntryController(configuration: configuration) // opt-in off
+        await controller.refreshSavedCards()
+        XCTAssertTrue(controller.savedCards.isEmpty)
+        XCTAssertNil(controller.selectedSavedCard)
     }
 
     func test_kmp_mapping_helpers_are_reachable_from_swift() {

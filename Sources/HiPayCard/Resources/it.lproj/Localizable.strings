@@ -25,6 +25,10 @@
 "LABEL_SAVED_CARDS" = "Carte salvate";
 "LABEL_NEW_CARD" = "Nuova carta";
 "LABEL_SAVE_CARD" = "Salva questa carta";
-/* Draft consent copy — final legal wording validated later with the merchant privacy slot. */
+/* PROVISIONAL consent wording — NOT yet legally approved: do not ship to production as-is.
+   The RGPD-validated copy and a slot for the merchant's own privacy-policy text come in a
+   later release. The key and its placement are stable — only the text will change. */
 "CONSENT_SAVE_CARD" = "Salva questa carta per pagare più velocemente. Potrai rimuoverla in qualsiasi momento.";
 "A11Y_SAVED_CARD" = "%1$@ che termina con %2$@, scade %3$@";
+"A11Y_EXPANDED" = "espanso";
+"A11Y_COLLAPSED" = "compresso";

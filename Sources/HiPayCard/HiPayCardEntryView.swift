@@ -63,12 +63,12 @@ public struct HiPayCardEntryView: View {
     // With the saved card selected, the entry fields are not rendered — their values stay in
     // the controller (nothing is cleared until a payment succeeds).
     private var showEntryFields: Bool {
-        !(controller.oneClickEnabled && controller.isSavedCardSelected)
+        !(controller.oneClickEnabled && controller.selectedSavedCard != nil)
     }
 
     public var body: some View {
         VStack(spacing: 12) {
-            if controller.oneClickEnabled, controller.savedCard != nil {
+            if controller.oneClickEnabled, !controller.savedCards.isEmpty {
                 savedCardsSections
                     .accessibilitySortPriority(order(5))
             }
@@ -183,11 +183,14 @@ public struct HiPayCardEntryView: View {
         // One-click: load the saved card on appearance (no-op unless opted in — fail-soft).
         .task { await controller.refreshSavedCards() }
         // Simple platform-standard expand/collapse when the selection changes.
-        .animation(.default, value: controller.isSavedCardSelected)
+        .animation(.default, value: controller.selectedSavedCard)
         // Single blur detector for all fields: when focus leaves a field, mark it
         // blurred (reveals its inline error) and announce the error politely once.
         .onChange(of: focus) { newFocus in
-            if let blurred = previousFocus, blurred != newFocus {
+            // Skip when focus was lost because the fields collapsed (a saved card was just
+            // selected): the field is gone, so marking it blurred / announcing its error is
+            // spurious. previousFocus still advances so the detector never gets stuck.
+            if showEntryFields, let blurred = previousFocus, blurred != newFocus {
                 controller.markBlurred(blurred)
                 announceError(for: blurred)
             }
@@ -205,7 +208,9 @@ public struct HiPayCardEntryView: View {
     /// and "New card" (an actionable header whose chevron shows the expanded state). Exactly one
     /// is selected at all times; VoiceOver reads the localized card label — never the bullets.
     @ViewBuilder private var savedCardsSections: some View {
-        if let card = controller.savedCard {
+        // Render the SELECTED card if one is picked, else the most-recent (the cell then reads as
+        // not-selected while the new-card branch is active).
+        if let card = controller.selectedSavedCard ?? controller.savedCards.first {
             let display = SavedCardDisplayKt.savedCardDisplay(card: card.kmp)
             let platformNetwork = display.network.flatMap { HiPayCardNetwork($0) }
             let a11yLabel = String(
@@ -214,10 +219,10 @@ public struct HiPayCardEntryView: View {
                 display.last4,
                 display.displayExpiry
             )
-            let selected = controller.isSavedCardSelected
+            let selected = controller.selectedSavedCard == card
             VStack(alignment: .leading, spacing: 12) {
                 sectionHeader(loc(.labelSavedCards))
-                Button { controller.selectSavedCard() } label: {
+                Button { controller.selectSavedCard(card) } label: {
                     HStack(spacing: 10) {
                         Image(platformNetwork?.assetName ?? HiPayCardNetwork.neutralAssetName, bundle: .module)
                             .resizable()
@@ -248,7 +253,8 @@ public struct HiPayCardEntryView: View {
                 .accessibilityLabel(a11yLabel)
                 .accessibilityAddTraits(selected ? [.isSelected] : [])
                 .accessibilityIdentifier("hipay.card.savedcard")
-                // "New card": same header treatment, actionable, chevron = expanded state.
+                // "New card": same header treatment, an actionable BUTTON whose expanded/collapsed
+                // value (not a radio selection) carries the meaning; the chevron mirrors it.
                 Button { controller.selectNewCard() } label: {
                     HStack {
                         sectionHeader(loc(.labelNewCard))
@@ -256,13 +262,14 @@ public struct HiPayCardEntryView: View {
                         Text(selected ? "▸" : "▾")
                             .font(.callout)
                             .foregroundColor(selected ? .secondary : .accentColor)
-                            .accessibilityHidden(true) // decorative: the button state carries the meaning
+                            .accessibilityHidden(true) // decorative: the button value carries the meaning
                     }
                     .frame(minHeight: 44)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityAddTraits(selected ? [] : [.isSelected])
+                .accessibilityAddTraits(.isButton)
+                .accessibilityValue(selected ? loc(.a11yCollapsed) : loc(.a11yExpanded))
                 .accessibilityIdentifier("hipay.card.newcard")
             }
         }
