@@ -187,6 +187,11 @@ public struct HiPayCardEntryView: View {
         .task { await controller.refreshSavedCards() }
         // Simple platform-standard expand/collapse when the selection changes.
         .animation(.default, value: controller.selectedSavedCard)
+        // Forget a manual list re-expand once a saved card is (re)selected, so each fresh new-card
+        // entry starts collapsed again (the collapse-to-MRU behaviour never silently stops).
+        .onChange(of: controller.selectedSavedCard) { newSelection in
+            if newSelection != nil { savedCardsExpanded = false }
+        }
         // Single blur detector for all fields: when focus leaves a field, mark it
         // blurred (reveals its inline error) and announce the error politely once.
         .onChange(of: focus) { newFocus in
@@ -225,7 +230,7 @@ public struct HiPayCardEntryView: View {
                 } else {
                     sectionHeader(loc(.labelSavedCards))
                 }
-                ForEach(Array(visibleCards.enumerated()), id: \.offset) { index, card in
+                ForEach(Array(visibleCards.enumerated()), id: \.element.id) { index, card in
                     savedCardCell(card, index: index)
                 }
                 newCardHeader
