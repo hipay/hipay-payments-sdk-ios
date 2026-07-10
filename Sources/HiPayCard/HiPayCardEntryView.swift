@@ -211,6 +211,12 @@ public struct HiPayCardEntryView: View {
             }
             Button(loc(.labelCancel), role: .cancel) { cardPendingDelete = nil }
         }
+        // Drop a pending confirmation if its card vanishes from the list underneath the open alert
+        // (a concurrent reload on foreground, or an expiry purge) — otherwise the payer would
+        // confirm deleting a card they can no longer see.
+        .onChange(of: controller.savedCards) { cards in
+            if let pending = cardPendingDelete, !cards.contains(pending) { cardPendingDelete = nil }
+        }
         // Single blur detector for all fields: when focus leaves a field, mark it
         // blurred (reveals its inline error) and announce the error politely once.
         .onChange(of: focus) { newFocus in
@@ -301,8 +307,12 @@ public struct HiPayCardEntryView: View {
         .accessibilityIdentifier("hipay.card.savedcard.\(index)")
         // Long-press requests delete (no visible button, PM decision); the mandatory a11y custom
         // action makes deletion reachable to VoiceOver (the long-press gesture is invisible to it).
-        .onLongPressGesture { cardPendingDelete = card }
-        .accessibilityAction(named: Text(loc(.labelDeleteCard))) { cardPendingDelete = card }
+        // Both are gated on isProcessing explicitly — a custom a11y action is not reliably
+        // suppressed by the ancestor .disabled, so delete must not be reachable mid-payment.
+        .onLongPressGesture { if !controller.isProcessing { cardPendingDelete = card } }
+        .accessibilityAction(named: Text(loc(.labelDeleteCard))) {
+            if !controller.isProcessing { cardPendingDelete = card }
+        }
     }
 
     /// "New card": an actionable BUTTON whose expanded/collapsed value carries the meaning.
