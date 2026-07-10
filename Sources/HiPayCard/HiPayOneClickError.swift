@@ -21,6 +21,8 @@ public struct HiPayOneClickError: Equatable {
         case expired
         /// Any other transient failure (network/server/client) — the card stays usable.
         case generic
+        /// Not a failure: the attempt is still being confirmed — surfaced as a soft hint.
+        case pending
     }
 
     /// The KMP error (identity matching + surface policy). Module-internal by design.
@@ -44,6 +46,10 @@ public struct HiPayOneClickError: Equatable {
         case .tokenInvalid: return .tokenInvalid
         case .threeDsFailed: return .threeDSFailed
         case .expired: return .expired
+        case .generic: return .generic
+        case .pending: return .pending
+        // Forward-compat fallback only — every KMP reason above is mapped explicitly, so a
+        // new one shows up as an unmapped case here (the Kotlin `messageKey()` still renders it).
         default: return .generic
         }
     }

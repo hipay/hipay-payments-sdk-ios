@@ -129,7 +129,9 @@ public final class HiPayCardEntryController: ObservableObject {
         await reload(reselectMostRecent: false)
         // An app-foreground refresh drops a stale one-click error unless the affected card is
         // still listed (then it is still the last failure and keeps its inline surface).
-        if let error = lastOneClickError, !savedCards.contains(where: error.matches) {
+        // Never while a pay is in flight: that path sets and manages the error under its own lock
+        // (e.g. tokenInvalid set just before its purge+reload) — a concurrent refresh must not wipe it.
+        if !isProcessing, let error = lastOneClickError, !savedCards.contains(where: error.matches) {
             lastOneClickError = nil
         }
     }
@@ -646,7 +648,15 @@ public final class HiPayCardEntryController: ObservableObject {
             throw error
         }
         let challenged = willPresent3DS(tx)
-        let final = try await resolve3DS(tx, redirectScheme: redirectScheme, signature: signature, threeDS: threeDS)
+        let final: HiPayTransaction
+        do {
+            final = try await resolve3DS(tx, redirectScheme: redirectScheme, signature: signature, threeDS: threeDS)
+        } catch let error as HiPayError {
+            // A failure during the 3DS round-trip (e.g. the confirm call) must be observable
+            // too — mirror the order-creation GENERIC path; the host still gets the rethrow.
+            lastOneClickError = HiPayOneClickError(OneClickError(card: card.kmp, reason: .generic))
+            throw error
+        }
         if let reason = OneClickErrorKt.oneClickReasonForOutcome(
             finalState: final.state.kmp,
             challenged: challenged,
@@ -701,7 +711,8 @@ public final class HiPayCardEntryController: ObservableObject {
     /// The single decides-a-challenge-is-presented guard for `resolve3DS` — also feeds the
     /// one-click `challenged` flag, so the two can never drift.
     private func willPresent3DS(_ tx: HiPayTransaction) -> Bool {
-        tx.state == .forwarding && tx.forwardUrl != nil
+        guard tx.state == .forwarding, let url = tx.forwardUrl else { return false }
+        return !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Forward the 3DS return URL here (from `.onOpenURL`) for the `.externalBrowser` mode; the SDK

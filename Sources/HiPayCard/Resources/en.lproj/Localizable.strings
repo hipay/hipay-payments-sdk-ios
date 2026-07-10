@@ -41,3 +41,5 @@
 "ERROR_ONE_CLICK_3DS" = "Authentication failed or was cancelled. Try again or use another card.";
 "ERROR_ONE_CLICK_EXPIRED" = "This card has expired. Pay with another card.";
 "ERROR_ONE_CLICK_GENERIC" = "The payment could not be completed. Try again or use another card.";
+/* PROVISIONAL copy (soft pending hint) — final wording pending UX/compliance sign-off. */
+"ERROR_ONE_CLICK_PENDING" = "Your payment is still being confirmed. Please wait a moment before trying again.";
