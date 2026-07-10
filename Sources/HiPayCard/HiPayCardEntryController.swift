@@ -117,6 +117,17 @@ public final class HiPayCardEntryController: ObservableObject {
         await reload(reselectMostRecent: false)
     }
 
+    /// Removes `card` from the saved-card store (in-component delete, driven by the gesture +
+    /// confirmation), then refreshes: a deleted **selected** card drops the selection to the
+    /// new-card branch, a **non-selected** one is preserved, the **last** one yields the no-card
+    /// state. Fail-visible — a failed store delete leaves the card in the refreshed list. No-op
+    /// unless ``oneClickEnabled``.
+    public func deleteSavedCard(_ card: HiPaySavedCard) async {
+        guard oneClickEnabled else { return }
+        await savedCardStore.with { _ = $0.delete(card: card.kmp) }
+        await reload(reselectMostRecent: false)
+    }
+
     /// Core (re)load. `reselectMostRecent` forces the most-recent card back into the selection
     /// (first load, and after a save / one-click payment); otherwise a still-present selection is
     /// kept and a vanished one (e.g. a purged card) falls back to the new-card branch.

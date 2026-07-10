@@ -36,6 +36,8 @@ public struct HiPayCardEntryView: View {
     // Saved-cards list expand/collapse (only meaningful in the new-card branch with >1 card):
     // while entering a new card the list collapses to the most-recent card; this re-expands it.
     @State private var savedCardsExpanded = false
+    // The saved card pending deletion — drives the confirmation dialog (UI-local, not the controller).
+    @State private var cardPendingDelete: HiPaySavedCard?
 
     public init(
         controller: HiPayCardEntryController,
@@ -192,6 +194,23 @@ public struct HiPayCardEntryView: View {
         .onChange(of: controller.selectedSavedCard) { newSelection in
             if newSelection != nil { savedCardsExpanded = false }
         }
+        // Delete confirmation (long-press / a11y action set `cardPendingDelete`). An `.alert`
+        // (not a `.confirmationDialog`) — the destructive-confirm equivalent of the Android
+        // `AlertDialog`, and reliably driveable under XCUITest via `app.alerts`.
+        .alert(
+            loc(.confirmDeleteCard),
+            isPresented: Binding(
+                get: { cardPendingDelete != nil },
+                set: { presented in if !presented { cardPendingDelete = nil } }
+            ),
+            presenting: cardPendingDelete
+        ) { card in
+            Button(loc(.labelDeleteCard), role: .destructive) {
+                Task { await controller.deleteSavedCard(card) }
+                cardPendingDelete = nil
+            }
+            Button(loc(.labelCancel), role: .cancel) { cardPendingDelete = nil }
+        }
         // Single blur detector for all fields: when focus leaves a field, mark it
         // blurred (reveals its inline error) and announce the error politely once.
         .onChange(of: focus) { newFocus in
@@ -280,6 +299,10 @@ public struct HiPayCardEntryView: View {
         .accessibilityLabel(a11yLabel)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
         .accessibilityIdentifier("hipay.card.savedcard.\(index)")
+        // Long-press requests delete (no visible button, PM decision); the mandatory a11y custom
+        // action makes deletion reachable to VoiceOver (the long-press gesture is invisible to it).
+        .onLongPressGesture { cardPendingDelete = card }
+        .accessibilityAction(named: Text(loc(.labelDeleteCard))) { cardPendingDelete = card }
     }
 
     /// "New card": an actionable BUTTON whose expanded/collapsed value carries the meaning.
