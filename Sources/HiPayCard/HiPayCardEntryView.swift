@@ -71,9 +71,25 @@ public struct HiPayCardEntryView: View {
         !(controller.oneClickEnabled && controller.selectedSavedCard != nil)
     }
 
+    // The shared policy point decides where (and whether) the one-click error surfaces:
+    // inline on the affected cell while listed, section-level when purged as no longer valid.
+    private var oneClickSurface: OneClickErrorSurface? {
+        OneClickErrorKt.oneClickErrorSurface(
+            error: controller.lastOneClickError?.kmp,
+            savedCards: controller.savedCards.map(\.kmp)
+        )
+    }
+
+    private var oneClickErrorMessage: String? {
+        controller.lastOneClickError.map { loc($0.messageKey) }
+    }
+
     public var body: some View {
         VStack(spacing: 12) {
-            if controller.oneClickEnabled, !controller.savedCards.isEmpty {
+            // Also composed when the list just emptied with a section-level one-click error to
+            // show (the last card was purged as no longer valid) — the payer must learn why.
+            if controller.oneClickEnabled,
+               !controller.savedCards.isEmpty || oneClickSurface == .section {
                 savedCardsSections
                     .accessibilitySortPriority(order(5))
             }
@@ -229,6 +245,15 @@ public struct HiPayCardEntryView: View {
             }
             previousFocus = newFocus
         }
+        // Announce a freshly surfaced one-click error politely (the field-error announce path):
+        // non-focus-stealing, deferred a runloop so it lands after any focus-change utterance.
+        .onChange(of: controller.lastOneClickError) { error in
+            guard let error, oneClickSurface != nil else { return }
+            let message = loc(error.messageKey)
+            DispatchQueue.main.async {
+                UIAccessibility.post(notification: .announcement, argument: message)
+            }
+        }
         // Lock all fields while a payment is in flight — driven by the SDK itself (story 11.14):
         // the controller sets isProcessing across pay() (incl. the 3DS round-trip), no host wiring.
         // SwiftUI cascades .disabled to children and composes with each field's own .disabled.
@@ -243,7 +268,14 @@ public struct HiPayCardEntryView: View {
     /// the bullets. While the new-card branch is active the list collapses to the most-recent card
     /// and the "Saved cards" header gains its own chevron to re-expand (single card → no collapse).
     @ViewBuilder private var savedCardsSections: some View {
-        if !controller.savedCards.isEmpty {
+        let surface = oneClickSurface
+        if controller.savedCards.isEmpty {
+            // The last card vanished as no longer valid mid-checkout: the list is gone but the
+            // payer still needs to know why — the section message alone, above the open fields.
+            if surface == .section, let message = oneClickErrorMessage {
+                errorSlot(message, id: "hipay.card.error.oneclick.section")
+            }
+        } else {
             let cards = controller.savedCards
             let newCardBranch = controller.selectedSavedCard == nil
             let collapsible = newCardBranch && cards.count > 1
@@ -255,8 +287,17 @@ public struct HiPayCardEntryView: View {
                 } else {
                     sectionHeader(loc(.labelSavedCards))
                 }
+                if surface == .section, let message = oneClickErrorMessage {
+                    errorSlot(message, id: "hipay.card.error.oneclick.section")
+                }
                 ForEach(Array(visibleCards.enumerated()), id: \.element.id) { index, card in
-                    savedCardCell(card, index: index)
+                    savedCardCell(
+                        card,
+                        index: index,
+                        error: surface == .inlineCard
+                            ? controller.lastOneClickError.flatMap { $0.matches(card) ? $0 : nil }
+                            : nil
+                    )
                 }
                 newCardHeader
             }
@@ -264,17 +305,21 @@ public struct HiPayCardEntryView: View {
     }
 
     /// One saved-card cell: 2-line masked display, border-only selection (no radio), merged label.
-    private func savedCardCell(_ card: HiPaySavedCard, index: Int) -> some View {
+    /// With a one-click `error` targeting this card, an inline error renders under the cell (the
+    /// field errorSlot pattern — icon + text) and joins the cell's merged label.
+    private func savedCardCell(_ card: HiPaySavedCard, index: Int, error: HiPayOneClickError? = nil) -> some View {
         let display = SavedCardDisplayKt.savedCardDisplay(card: card.kmp)
         let platformNetwork = display.network.flatMap { HiPayCardNetwork($0) }
-        let a11yLabel = String(
+        let baseA11yLabel = String(
             format: loc(.a11ySavedCard),
             platformNetwork?.displayName ?? card.network,
             display.last4,
             display.displayExpiry
         )
+        // The error is part of the merged cell label: focusing the cell reads why it failed.
+        let a11yLabel = error.map { "\(baseA11yLabel), \(loc($0.messageKey))" } ?? baseA11yLabel
         let selected = controller.selectedSavedCard == card
-        return Button { controller.selectSavedCard(card) } label: {
+        let cell = Button { controller.selectSavedCard(card) } label: {
             HStack(spacing: 10) {
                 Image(platformNetwork?.assetName ?? HiPayCardNetwork.neutralAssetName, bundle: .module)
                     .resizable()
@@ -312,6 +357,13 @@ public struct HiPayCardEntryView: View {
         .onLongPressGesture { if !controller.isProcessing { cardPendingDelete = card } }
         .accessibilityAction(named: Text(loc(.labelDeleteCard))) {
             if !controller.isProcessing { cardPendingDelete = card }
+        }
+        // The cell + its inline error travel as one visual unit (the field errorSlot spacing).
+        return VStack(alignment: .leading, spacing: 4) {
+            cell
+            if let error {
+                errorSlot(loc(error.messageKey), id: "hipay.card.error.savedcard.\(index)")
+            }
         }
     }
 

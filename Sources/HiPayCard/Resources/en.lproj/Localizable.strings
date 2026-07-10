@@ -36,3 +36,8 @@
 "LABEL_DELETE_CARD" = "Delete card";
 "CONFIRM_DELETE_CARD" = "Remove this saved card? You can save it again next time you pay.";
 "LABEL_CANCEL" = "Cancel";
+"ERROR_ONE_CLICK_DECLINED" = "Payment declined. Try another card or enter a new one.";
+"ERROR_ONE_CLICK_CARD_REMOVED" = "This card can no longer be used and was removed. Pay with a new card.";
+"ERROR_ONE_CLICK_3DS" = "Authentication failed or was cancelled. Try again or use another card.";
+"ERROR_ONE_CLICK_EXPIRED" = "This card has expired. Pay with another card.";
+"ERROR_ONE_CLICK_GENERIC" = "The payment could not be completed. Try again or use another card.";

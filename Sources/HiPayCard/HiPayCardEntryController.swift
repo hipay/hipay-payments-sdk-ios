@@ -65,6 +65,14 @@ public final class HiPayCardEntryController: ObservableObject {
     /// fresh `pay(saveCard: true)` resets it, and it stays nil when the payment does not complete.
     @Published public private(set) var lastSaveOutcome: HiPaySaveOutcome?
 
+    /// The most recent one-click failure, as a transient observable outcome (the sibling of
+    /// ``lastSaveOutcome`` for the pay path): the affected card's masked identity plus a reason.
+    /// Set inside `payWithSavedCard(_:...)` — the call still throws/returns exactly as before;
+    /// this is additive. Cleared at the start of the next attempt, on any selection change, on a
+    /// new-card field edit, and by a ``refreshSavedCards()`` that no longer lists the affected
+    /// card. The component renders it via the shared surface policy; hosts may read it too.
+    @Published public private(set) var lastOneClickError: HiPayOneClickError?
+
     // MARK: - One-click UI state (rendered by HiPayCardEntryView only when opted in)
 
     /// Explicit integrator opt-in for the one-click (saved cards) UI — off by default: without it
@@ -89,12 +97,16 @@ public final class HiPayCardEntryController: ObservableObject {
     /// Select `card` (collapses the entry fields — their values are preserved). Ignored when the
     /// card is not one of ``savedCards``.
     public func selectSavedCard(_ card: HiPaySavedCard) {
-        if savedCards.contains(card) { selectedSavedCard = card }
+        if savedCards.contains(card) {
+            selectedSavedCard = card
+            lastOneClickError = nil // a new intent supersedes the previous failure
+        }
     }
 
     /// Select the new-card branch (expands the entry fields).
     public func selectNewCard() {
         selectedSavedCard = nil
+        lastOneClickError = nil // a new intent supersedes the previous failure
     }
 
     /// Save-switch handler (called from the component's toggle).
@@ -115,6 +127,11 @@ public final class HiPayCardEntryController: ObservableObject {
     /// into card entry.
     public func refreshSavedCards() async {
         await reload(reselectMostRecent: false)
+        // An app-foreground refresh drops a stale one-click error unless the affected card is
+        // still listed (then it is still the last failure and keeps its inline surface).
+        if let error = lastOneClickError, !savedCards.contains(where: error.matches) {
+            lastOneClickError = nil
+        }
     }
 
     /// Removes `card` from the saved-card store (in-component delete, driven by the gesture +
@@ -126,6 +143,12 @@ public final class HiPayCardEntryController: ObservableObject {
         guard oneClickEnabled else { return }
         await savedCardStore.with { _ = $0.delete(card: card.kmp) }
         await reload(reselectMostRecent: false)
+        // Deleting the card an error pointed at is an intent too — once the card is really
+        // gone there is nothing left to recover, so don't keep a stale outcome observable.
+        if let error = lastOneClickError, error.matches(card),
+           !savedCards.contains(where: error.matches) {
+            lastOneClickError = nil
+        }
     }
 
     /// Core (re)load. `reselectMostRecent` forces the most-recent card back into the selection
@@ -208,8 +231,11 @@ public final class HiPayCardEntryController: ObservableObject {
     // second assignment here is what reformats live. The `!=` guards
     // terminate the onChange -> write -> onChange recursion.
 
+    // Each edit is a fresh payment intent → it supersedes a showing one-click error.
+
     /// Holder name, forced to upper case (max 60 chars, FR11).
     func holderEdited() {
+        lastOneClickError = nil
         let formatted = String(holder.uppercased().prefix(60))
         if formatted != holder { holder = formatted }
     }
@@ -217,6 +243,7 @@ public final class HiPayCardEntryController: ObservableObject {
     /// Card number, auto-formatted per detected network while typing
     /// (Amex 4-6-5, others groups of 4 — KMP rules).
     func numberEdited() {
+        lastOneClickError = nil
         // Explicit 19-digit cap (max PAN length) — don't rely on format()'s
         // group template as the de-facto length limit.
         let capped = String(cardNumber.filter(\.isNumber).prefix(19))
@@ -298,6 +325,7 @@ public final class HiPayCardEntryController: ObservableObject {
     /// Expiry as "MM/YY": the slash is appended as soon as the month's 2
     /// digits are typed — but not while deleting, so backspace can cross it.
     func expiryEdited() {
+        lastOneClickError = nil
         let digits = String(expiry.filter(\.isNumber).prefix(4))
         let isDeleting = expiry.count < previousExpiry.count
         let formatted: String
@@ -314,6 +342,7 @@ public final class HiPayCardEntryController: ObservableObject {
 
     /// CVC, capped to the network's length (4 for Amex, 3 otherwise).
     func cvcEdited() {
+        lastOneClickError = nil
         let formatted = String(cvc.filter(\.isNumber).prefix(cvcMaxLength))
         if formatted != cvc { cvc = formatted }
     }
@@ -577,6 +606,10 @@ public final class HiPayCardEntryController: ObservableObject {
         shipping: HiPayCustomerInfo? = nil,
         threeDS: HiPayThreeDSMode = .inAppSession
     ) async throws -> HiPayTransaction {
+        lastOneClickError = nil // a fresh attempt supersedes the previous outcome
+        // Sampled before the (possibly long) 3DS round-trip: the reason must reflect the
+        // card as it was when the payer tapped Pay.
+        let expiredAtAttempt = OneClickErrorKt.savedCardExpiredNow(card: card.kmp)
         isProcessing = true
         defer { isProcessing = false }
         let payment = HiPayPayment(configuration: configuration)
@@ -599,15 +632,29 @@ public final class HiPayCardEntryController: ObservableObject {
             )
         } catch let error as HiPayError {
             if case .cardNoLongerValid = error {
+                // Set BEFORE the purge+reload so the error survives the card vanishing
+                // (the component then shows its section-level notice).
+                lastOneClickError = HiPayOneClickError(OneClickError(card: card.kmp, reason: .tokenInvalid))
                 // Definitive gateway verdict: purge the stale card, then surface the error.
                 await savedCardStore.with { _ = $0.delete(card: card.kmp) }
                 // Refresh inside the processing lock (the defer below still holds it), so the purged
                 // card is gone and the selection has fallen back to new-card before the host unlocks.
                 await reload(reselectMostRecent: false)
+            } else {
+                lastOneClickError = HiPayOneClickError(OneClickError(card: card.kmp, reason: .generic))
             }
             throw error
         }
+        let challenged = willPresent3DS(tx)
         let final = try await resolve3DS(tx, redirectScheme: redirectScheme, signature: signature, threeDS: threeDS)
+        if let reason = OneClickErrorKt.oneClickReasonForOutcome(
+            finalState: final.state.kmp,
+            challenged: challenged,
+            authenticationStatus: final.threeDSecureAuthenticationStatus,
+            cardExpiredAtAttempt: expiredAtAttempt
+        ) {
+            lastOneClickError = HiPayOneClickError(OneClickError(card: card.kmp, reason: reason))
+        }
         if final.state == .completed {
             await savedCardStore.with { _ = $0.touch(card: card.kmp) }
             // Refresh inside the lock (the touched card is now MRU and re-selected) so there is no
@@ -624,8 +671,9 @@ public final class HiPayCardEntryController: ObservableObject {
         signature: String?,
         threeDS: HiPayThreeDSMode
     ) async throws -> HiPayTransaction {
-        // No 3DS → already final.
-        guard tx.state == .forwarding, let url = tx.forwardUrl else {
+        // No 3DS → already final (the shared willPresent3DS guard — also feeds the one-click
+        // `challenged` flag, so the two can never drift).
+        guard willPresent3DS(tx), let url = tx.forwardUrl else {
             return tx
         }
         // 3DS challenge: the SDK presents it and returns the FINAL transaction (story 11.13).
@@ -648,6 +696,12 @@ public final class HiPayCardEntryController: ObservableObject {
                 Task { @MainActor in await UIApplication.shared.open(url) }
             }
         }
+    }
+
+    /// The single decides-a-challenge-is-presented guard for `resolve3DS` — also feeds the
+    /// one-click `challenged` flag, so the two can never drift.
+    private func willPresent3DS(_ tx: HiPayTransaction) -> Bool {
+        tx.state == .forwarding && tx.forwardUrl != nil
     }
 
     /// Forward the 3DS return URL here (from `.onOpenURL`) for the `.externalBrowser` mode; the SDK

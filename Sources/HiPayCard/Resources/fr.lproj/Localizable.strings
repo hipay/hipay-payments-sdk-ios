@@ -36,3 +36,8 @@
 "LABEL_DELETE_CARD" = "Supprimer la carte";
 "CONFIRM_DELETE_CARD" = "Supprimer cette carte enregistrée ? Vous pourrez l'enregistrer à nouveau lors d'un prochain paiement.";
 "LABEL_CANCEL" = "Annuler";
+"ERROR_ONE_CLICK_DECLINED" = "Paiement refusé. Essayez une autre carte ou saisissez-en une nouvelle.";
+"ERROR_ONE_CLICK_CARD_REMOVED" = "Cette carte ne peut plus être utilisée et a été supprimée. Payez avec une nouvelle carte.";
+"ERROR_ONE_CLICK_3DS" = "L'authentification a échoué ou a été annulée. Réessayez ou utilisez une autre carte.";
+"ERROR_ONE_CLICK_EXPIRED" = "Cette carte a expiré. Payez avec une autre carte.";
+"ERROR_ONE_CLICK_GENERIC" = "Le paiement n'a pas pu être effectué. Réessayez ou utilisez une autre carte.";
