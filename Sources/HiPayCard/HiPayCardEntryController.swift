@@ -712,7 +712,7 @@ public final class HiPayCardEntryController: ObservableObject {
     /// one-click `challenged` flag, so the two can never drift.
     private func willPresent3DS(_ tx: HiPayTransaction) -> Bool {
         guard tx.state == .forwarding, let url = tx.forwardUrl else { return false }
-        return !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return !url.absoluteString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Forward the 3DS return URL here (from `.onOpenURL`) for the `.externalBrowser` mode; the SDK
