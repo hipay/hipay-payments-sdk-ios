@@ -19,6 +19,11 @@ import HiPayFullservice
 /// (icon + text, not colour-only) once the field has blurred, and are announced
 /// politely without stealing focus. The component sets the RELATIVE traversal
 /// order of its own fields (D12) unless `setsAccessibilityOrder` is false.
+///
+/// Styling: appearance comes from `theme` — build it from the shared cross-platform
+/// `HiPayCardEntryStyle` (`HiPayCardTheme(style:)`) or customize `HiPayCardTheme.hipayDefault`
+/// per property. Colors/typography/metrics only — behaviours (formatting, focus, one-click,
+/// accessibility) are untouched by theming.
 public struct HiPayCardEntryView: View {
 
     @ObservedObject private var controller: HiPayCardEntryController
@@ -41,7 +46,7 @@ public struct HiPayCardEntryView: View {
 
     public init(
         controller: HiPayCardEntryController,
-        theme: HiPayCardTheme = .default,
+        theme: HiPayCardTheme = .hipayDefault,
         setsAccessibilityOrder: Bool = true
     ) {
         self.controller = controller
@@ -50,6 +55,13 @@ public struct HiPayCardEntryView: View {
     }
 
     private func loc(_ key: CardEntryStringKey) -> String { HiPayCardStrings.localized(key) }
+
+    // Themed placeholder (SwiftUI styles placeholders via the `prompt` Text, not the field's
+    // foreground). The default placeholderColor matches the system placeholder gray, so the
+    // no-style path looks unchanged.
+    private func prompt(_ text: String) -> Text {
+        Text(text).foregroundColor(theme.placeholderColor)
+    }
 
     // CVC is required (enabled) or not-applicable (disabled) — never a true "optional"
     // enterable state — so the label/placeholder carry no "(optional)" suffix (story 11.3
@@ -96,11 +108,15 @@ public struct HiPayCardEntryView: View {
             if showEntryFields {
             // Holder
             VStack(alignment: .leading, spacing: 4) {
-                TextField(loc(.placeholderHolder), text: $controller.holder)
+                TextField(
+                    loc(.placeholderHolder),
+                    text: $controller.holder,
+                    prompt: prompt(loc(.placeholderHolder))
+                )
                     .textInputAutocapitalization(.characters)
                     .autocorrectionDisabled()
                     .focused($focus, equals: .holder)
-                    .modifier(EntryFieldStyle(valid: controller.isHolderAcceptable))
+                    .modifier(EntryFieldStyle(theme: theme, valid: controller.isHolderAcceptable))
                     .onChange(of: controller.holder) { _ in controller.holderEdited() }
                     .accessibilityLabel(loc(.labelHolder))
                     .accessibilityIdentifier("hipay.card.holder")
@@ -110,12 +126,16 @@ public struct HiPayCardEntryView: View {
 
             // Card number (+ network chips overlay)
             VStack(alignment: .leading, spacing: 4) {
-                TextField(loc(.placeholderNumber), text: $controller.cardNumber)
+                TextField(
+                    loc(.placeholderNumber),
+                    text: $controller.cardNumber,
+                    prompt: prompt(loc(.placeholderNumber))
+                )
                     .keyboardType(.numberPad)
                     .textContentType(.creditCardNumber)
                     .autocorrectionDisabled()
                     .focused($focus, equals: .number)
-                    .modifier(EntryFieldStyle(valid: controller.isNumberAcceptable))
+                    .modifier(EntryFieldStyle(theme: theme, valid: controller.isNumberAcceptable))
                     // a11y modifiers BEFORE the overlay so they bind to the field
                     // only and do NOT subsume the network chips' own a11y.
                     .accessibilityLabel(loc(.labelNumber))
@@ -134,11 +154,15 @@ public struct HiPayCardEntryView: View {
             HStack(alignment: .top, spacing: 12) {
                 // Expiry
                 VStack(alignment: .leading, spacing: 4) {
-                    TextField(loc(.placeholderExpiry), text: $controller.expiry)
+                    TextField(
+                        loc(.placeholderExpiry),
+                        text: $controller.expiry,
+                        prompt: prompt(loc(.placeholderExpiry))
+                    )
                         .keyboardType(.numberPad)
                         .autocorrectionDisabled()
                         .focused($focus, equals: .expiry)
-                        .modifier(EntryFieldStyle(valid: controller.isExpiryAcceptable))
+                        .modifier(EntryFieldStyle(theme: theme, valid: controller.isExpiryAcceptable))
                         .onChange(of: controller.expiry) { _ in
                             controller.expiryEdited()
                             guard controller.isExpiryComplete else { return }
@@ -152,13 +176,17 @@ public struct HiPayCardEntryView: View {
                 // CVV — NOT masked (user decision 2026-06-12); disabled when the
                 // detected network does not require a CVC.
                 VStack(alignment: .leading, spacing: 4) {
-                    TextField(cvvPlaceholder, text: $controller.cvc)
+                    TextField(
+                        cvvPlaceholder,
+                        text: $controller.cvc,
+                        prompt: prompt(cvvPlaceholder)
+                    )
                         .keyboardType(.numberPad)
                         .autocorrectionDisabled()
                         .focused($focus, equals: .cvc)
                         .disabled(!controller.isCvcRequired)
                         .opacity(controller.isCvcRequired ? 1 : 0.4)
-                        .modifier(EntryFieldStyle(valid: controller.isCvcAcceptable))
+                        .modifier(EntryFieldStyle(theme: theme, valid: controller.isCvcAcceptable))
                         .accessibilityLabel(cvvLabel)
                         .accessibilityIdentifier("hipay.card.cvc")
                         // Info affordance INSIDE the field, right-aligned (a11y modifiers
@@ -191,6 +219,7 @@ public struct HiPayCardEntryView: View {
             if controller.isCvcRequired && showCvvInfo {
                 Text(loc(.cvvTooltip))
                     .font(.caption)
+                    .foregroundColor(theme.textColor)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("hipay.card.cvc.tooltip")
@@ -236,6 +265,9 @@ public struct HiPayCardEntryView: View {
         // Single blur detector for all fields: when focus leaves a field, mark it
         // blurred (reveals its inline error) and announce the error politely once.
         .onChange(of: focus) { newFocus in
+            // Focusing a field dismisses the CVV help — the established tap-outside
+            // dismissal (the help must never act as a focus trap).
+            if newFocus != nil { showCvvInfo = false }
             // Skip when focus was lost because the fields collapsed (a saved card was just
             // selected): the field is gone, so marking it blurred / announcing its error is
             // spurious. previousFocus still advances so the detector never gets stuck.
@@ -328,21 +360,37 @@ public struct HiPayCardEntryView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(display.maskedNumber)
                         .font(.body.monospaced())
-                        .foregroundColor(.primary)
+                        .foregroundColor(theme.textColor)
                     Text("\(card.holder)  ·  \(display.displayExpiry)")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(theme.placeholderColor)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
             }
             .padding(10)
             .frame(minHeight: 44)
+            // Cells follow the theme's metrics so they agree with the entry fields; the
+            // SELECTED cell keeps the platform accent — a thicker accent border (the fields'
+            // focus treatment) and an accent tint layered OVER the theme background — as the
+            // selection affordance (no accent slot in the style contract yet).
+            .background {
+                // Selection tint drawn over the theme background, under the content
+                // (the second .background renders behind this one).
+                if selected {
+                    RoundedRectangle(cornerRadius: theme.cornerRadius)
+                        .fill(Color.accentColor.opacity(0.08))
+                }
+            }
+            .background(
+                theme.backgroundColor,
+                in: RoundedRectangle(cornerRadius: theme.cornerRadius)
+            )
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: theme.cornerRadius)
                     .stroke(
-                        selected ? Color.accentColor : Color.secondary.opacity(0.4),
-                        lineWidth: selected ? 1.8 : 1
+                        selected ? Color.accentColor : theme.borderColor,
+                        lineWidth: selected ? theme.borderWidth + 1 : theme.borderWidth
                     )
             )
         }
@@ -376,7 +424,7 @@ public struct HiPayCardEntryView: View {
                 Spacer()
                 Text(expanded ? "▾" : "▸")
                     .font(.callout)
-                    .foregroundColor(expanded ? .accentColor : .secondary)
+                    .foregroundColor(expanded ? .accentColor : theme.iconColor)
                     .accessibilityHidden(true) // decorative: the button value carries the meaning
             }
             .frame(minHeight: 44)
@@ -396,7 +444,7 @@ public struct HiPayCardEntryView: View {
                 Spacer()
                 Text(savedCardsExpanded ? "▾" : "▸")
                     .font(.callout)
-                    .foregroundColor(savedCardsExpanded ? .accentColor : .secondary)
+                    .foregroundColor(savedCardsExpanded ? .accentColor : theme.iconColor)
                     .accessibilityHidden(true) // decorative: the button value carries the meaning
             }
             .frame(minHeight: 44)
@@ -412,11 +460,13 @@ public struct HiPayCardEntryView: View {
     private func sectionHeader(_ text: String) -> some View {
         Text(text.uppercased())
             .font(.caption.weight(.semibold))
-            .foregroundColor(.secondary)
+            .foregroundColor(theme.placeholderColor)
             .lineLimit(1)
     }
 
-    /// In-frame "save this card" switch (consent, default OFF) + one-line consent text.
+    /// In-frame "save this card" switch (consent, default OFF) + one-line consent text. The
+    /// toggle tint keeps the platform accent (no accent slot in the style contract yet) — the
+    /// theme drives the label and consent text, mirroring the CMP renderer.
     private var saveCardSwitch: some View {
         VStack(alignment: .leading, spacing: 4) {
             Toggle(isOn: Binding(
@@ -424,12 +474,13 @@ public struct HiPayCardEntryView: View {
                 set: { controller.onSaveCardOptInChange($0) }
             )) {
                 Text(loc(.labelSaveCard))
+                    .foregroundColor(theme.textColor)
             }
             .frame(minHeight: 44)
             .accessibilityIdentifier("hipay.card.saveswitch")
             Text(loc(.consentSaveCard))
                 .font(.caption)
-                .foregroundColor(.secondary)
+                .foregroundColor(theme.placeholderColor)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("hipay.card.consent")
         }
@@ -450,7 +501,7 @@ public struct HiPayCardEntryView: View {
                     .accessibilityIdentifier(id)
             }
             .font(.caption)
-            .foregroundColor(.red)
+            .foregroundColor(theme.invalidTextColor)
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -484,6 +535,7 @@ public struct HiPayCardEntryView: View {
     private var cvvInfoButton: some View {
         Button { showCvvInfo.toggle() } label: {
             Image(systemName: "info.circle")
+                .foregroundColor(theme.iconColor)
         }
         .buttonStyle(.plain)
         .frame(minWidth: 44, minHeight: 44) // tap target >= 44x44 (HIG)
@@ -521,16 +573,21 @@ public struct HiPayCardEntryView: View {
         }
     }
 
-    // A brand logo inside a credit-card-shaped chip (~1.6:1) with left/right
-    // padding around the logo. Outlined when highlighted.
+    // A brand logo inside a credit-card-shaped chip (~1.6:1) with left/right padding around
+    // the logo. Outlined when highlighted. Selection treatment mirrors the CMP renderer: the
+    // SELECTED chip keeps its full-color brand mark (network logos are never re-tinted);
+    // dimmed chips and the neutral glyph render as monochrome silhouettes in the theme's
+    // iconColor — the monochrome-vs-color contrast replaces the former opacity-only dimming,
+    // and the selected state stays announced via the `.isSelected` trait.
     private func brandChip(assetName: String, highlighted: Bool, dimmed: Bool) -> some View {
         Image(assetName, bundle: .module)
             .resizable()
+            .renderingMode(dimmed ? .template : .original)
             .scaledToFit()
             .padding(.horizontal, 5)
             .padding(.vertical, 3)
             .frame(width: 33, height: 21) // credit-card aspect ratio (~1.586:1)
-            .opacity(dimmed ? 0.35 : 1)
+            .foregroundColor(dimmed ? theme.iconColor : nil)
             .overlay(
                 RoundedRectangle(cornerRadius: 4)
                     .stroke(Color.accentColor, lineWidth: highlighted ? 1.5 : 0),
@@ -539,14 +596,31 @@ public struct HiPayCardEntryView: View {
 }
 
 private struct EntryFieldStyle: ViewModifier {
+    let theme: HiPayCardTheme
     let valid: Bool
+
+    // Dynamic Type factor (1.0 at the default content size, .body curve): the themed font
+    // keeps scaling like the system font it replaces. fieldHeight is a MINIMUM, so the
+    // field grows with the scaled line instead of clipping the entered card data.
+    @ScaledMetric(relativeTo: .body) private var typeScale: CGFloat = 1
 
     func body(content: Content) -> some View {
         content
+            .font(theme.font(scale: typeScale))
+            .foregroundColor(theme.textColor)
+            .tint(theme.textColor) // caret — mirrors the CMP renderer's cursor color
             .padding(10)
+            .frame(minHeight: theme.fieldHeight)
+            .background(
+                theme.backgroundColor,
+                in: RoundedRectangle(cornerRadius: theme.cornerRadius)
+            )
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(valid ? Color.secondary.opacity(0.4) : Color.red, lineWidth: 1)
+                RoundedRectangle(cornerRadius: theme.cornerRadius)
+                    .stroke(
+                        valid ? theme.borderColor : theme.invalidTextColor,
+                        lineWidth: theme.borderWidth
+                    )
             )
     }
 }
