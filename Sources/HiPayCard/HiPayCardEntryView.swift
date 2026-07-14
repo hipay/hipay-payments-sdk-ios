@@ -236,8 +236,13 @@ public struct HiPayCardEntryView: View {
         .animation(.default, value: controller.selectedSavedCard)
         // Forget a manual list re-expand once a saved card is (re)selected, so each fresh new-card
         // entry starts collapsed again (the collapse-to-MRU behaviour never silently stops).
+        // Also drop an open CVV help: the entry fields are collapsing, and it must not
+        // re-appear unprompted when "New card" is next expanded.
         .onChange(of: controller.selectedSavedCard) { newSelection in
-            if newSelection != nil { savedCardsExpanded = false }
+            if newSelection != nil {
+                savedCardsExpanded = false
+                showCvvInfo = false
+            }
         }
         // Delete confirmation (long-press / a11y action set `cardPendingDelete`). An `.alert`
         // (not a `.confirmationDialog`) — the destructive-confirm equivalent of the Android
@@ -265,9 +270,10 @@ public struct HiPayCardEntryView: View {
         // Single blur detector for all fields: when focus leaves a field, mark it
         // blurred (reveals its inline error) and announce the error politely once.
         .onChange(of: focus) { newFocus in
-            // Focusing a field dismisses the CVV help — the established tap-outside
-            // dismissal (the help must never act as a focus trap).
-            if newFocus != nil { showCvvInfo = false }
+            // Focusing another field dismisses the CVV help — the established tap-outside
+            // dismissal (the help must never act as a focus trap). The CVV field itself is
+            // exempt: auto-advance or tapping the field the help explains must not close it.
+            if let newFocus, newFocus != .cvc { showCvvInfo = false }
             // Skip when focus was lost because the fields collapsed (a saved card was just
             // selected): the field is gone, so marking it blurred / announcing its error is
             // spurious. previousFocus still advances so the detector never gets stuck.
@@ -552,7 +558,7 @@ public struct HiPayCardEntryView: View {
     @ViewBuilder private var networkIcons: some View {
         HStack(spacing: 6) {
             if controller.networks.isEmpty {
-                brandChip(assetName: "HPCardNeutral", highlighted: false, dimmed: true)
+                brandChip(assetName: "HPCardNeutral", highlighted: false, dimmed: false, tinted: true)
                     .accessibilityHidden(true) // decorative neutral placeholder
             } else {
                 ForEach(controller.networks, id: \.self) { net in
@@ -574,20 +580,26 @@ public struct HiPayCardEntryView: View {
     }
 
     // A brand logo inside a credit-card-shaped chip (~1.6:1) with left/right padding around
-    // the logo. Outlined when highlighted. Selection treatment mirrors the CMP renderer: the
-    // SELECTED chip keeps its full-color brand mark (network logos are never re-tinted);
-    // dimmed chips and the neutral glyph render as monochrome silhouettes in the theme's
-    // iconColor — the monochrome-vs-color contrast replaces the former opacity-only dimming,
-    // and the selected state stays announced via the `.isSelected` trait.
-    private func brandChip(assetName: String, highlighted: Bool, dimmed: Bool) -> some View {
+    // the logo. Outlined when highlighted. Selection treatment mirrors the CMP renderer:
+    // dimmed brand chips use 0.35 opacity — several brand marks sit on an OPAQUE plate
+    // (asset audit: amex, cb), so template-tinting them flattens the plate into an
+    // unreadable block; brand logos are never re-tinted. Only the neutral placeholder
+    // (a true silhouette, `tinted`) takes the theme's iconColor.
+    private func brandChip(
+        assetName: String,
+        highlighted: Bool,
+        dimmed: Bool,
+        tinted: Bool = false
+    ) -> some View {
         Image(assetName, bundle: .module)
             .resizable()
-            .renderingMode(dimmed ? .template : .original)
+            .renderingMode(tinted ? .template : .original)
             .scaledToFit()
             .padding(.horizontal, 5)
             .padding(.vertical, 3)
             .frame(width: 33, height: 21) // credit-card aspect ratio (~1.586:1)
-            .foregroundColor(dimmed ? theme.iconColor : nil)
+            .foregroundColor(tinted ? theme.iconColor : nil)
+            .opacity(dimmed ? 0.35 : 1)
             .overlay(
                 RoundedRectangle(cornerRadius: 4)
                     .stroke(Color.accentColor, lineWidth: highlighted ? 1.5 : 0),

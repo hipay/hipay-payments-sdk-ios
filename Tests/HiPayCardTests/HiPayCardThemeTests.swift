@@ -55,6 +55,23 @@ final class HiPayCardThemeTests: XCTestCase {
         XCTAssertTrue(theme(fontStyle: .italic).isItalic)
     }
 
+    func testExportedFontEnumsExposeExactlyTheContractedEntries() {
+        // Tripwire: the Swift weight mapping falls back to .regular for unknown entries —
+        // a new contract constant must fail HERE, loudly, not render silently wrong.
+        XCTAssertEqual(names(of: HiPayFontWeight.values()), ["REGULAR", "MEDIUM", "SEMIBOLD", "BOLD"])
+        XCTAssertEqual(names(of: HiPayFontStyle.values()), ["NORMAL", "ITALIC"])
+    }
+
+    func testFontBuilderMultipliesTheScaleAndAppliesItalic() {
+        let theme = HiPayCardTheme.hipayDefault
+        XCTAssertEqual(theme.font(), Font.system(size: 16, weight: .regular))
+        XCTAssertEqual(theme.font(scale: 1.5), Font.system(size: 24, weight: .regular))
+        var italic = theme
+        italic.isItalic = true
+        italic.fontWeight = .semibold
+        XCTAssertEqual(italic.font(), Font.system(size: 16, weight: .semibold).italic())
+    }
+
     // MARK: custom style mapping
 
     func testCustomStyleMapsEveryPrimitive() {
@@ -83,6 +100,14 @@ final class HiPayCardThemeTests: XCTestCase {
     }
 
     // MARK: helpers
+
+    private func names(of entries: KotlinArray<HiPayFontWeight>) -> [String] {
+        (0..<entries.size).compactMap { entries.get(index: $0)?.name }
+    }
+
+    private func names(of entries: KotlinArray<HiPayFontStyle>) -> [String] {
+        (0..<entries.size).compactMap { entries.get(index: $0)?.name }
+    }
 
     private func theme(
         weight: HiPayFontWeight = .regular,
