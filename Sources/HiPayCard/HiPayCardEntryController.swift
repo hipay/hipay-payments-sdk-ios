@@ -651,9 +651,13 @@ public final class HiPayCardEntryController: ObservableObject {
         let final: HiPayTransaction
         do {
             final = try await resolve3DS(tx, redirectScheme: redirectScheme, signature: signature, threeDS: threeDS)
-        } catch let error as HiPayError {
-            // A failure during the 3DS round-trip (e.g. the confirm call) must be observable
-            // too — mirror the order-creation GENERIC path; the host still gets the rethrow.
+        } catch let cancellation as CancellationError {
+            throw cancellation
+        } catch {
+            // Any failure during the 3DS phase must be observable — including non-HiPayError throws
+            // from the presentation launch itself (e.g. no presenter/URL to open the challenge), which
+            // a HiPayError-only catch let slip through as a null error. The host still gets the rethrow;
+            // task cancellation is never relabelled.
             lastOneClickError = HiPayOneClickError(OneClickError(card: card.kmp, reason: .generic))
             throw error
         }

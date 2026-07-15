@@ -32,6 +32,22 @@ public enum HiPayCardStrings {
                 return bundle.localizedString(forKey: name, value: name, table: nil)
             }
         }
+        // Default (no override): resolve the DEVICE's preferred language explicitly. Calling
+        // `Bundle.module.localizedString` directly selects via the resource sub-bundle's own
+        // `preferredLocalizations`, which SPM caps to its `CFBundleDevelopmentRegion` (EN) and which
+        // does NOT follow the device locale — so a French device would wrongly get EN. Match the
+        // language ourselves against the device preference order (uncapped), then load that catalog
+        // directly, mirroring the override branch above and the CMP renderer's
+        // `NSLocale.preferredLanguages` resolution.
+        let preferred = Bundle.preferredLocalizations(
+            from: Bundle.module.localizations,
+            forPreferences: Locale.preferredLanguages
+        ).first ?? "en"
+        let lproj = Bundle.module.path(forResource: preferred, ofType: "lproj")
+            ?? Bundle.module.path(forResource: "en", ofType: "lproj")
+        if let path = lproj, let bundle = Bundle(path: path) {
+            return bundle.localizedString(forKey: name, value: name, table: nil)
+        }
         return Bundle.module.localizedString(forKey: name, value: name, table: nil)
     }
 }
