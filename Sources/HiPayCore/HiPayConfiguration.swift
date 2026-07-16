@@ -8,9 +8,10 @@ public enum HiPayEnvironment: Sendable {
 
 /// SDK configuration, built by the host and passed to HiPay components.
 /// No global state (architecture D7) — the optional ``settings`` follow the same rule (an injected
-/// instance shared across components, never a singleton). Not `Sendable`: ``settings`` is a shared
-/// mutable object (the same `HiPaySettings` type used on Android/CMP).
-public struct HiPayConfiguration {
+/// instance shared across components, never a singleton). `@unchecked Sendable`: ``settings`` is a
+/// shared mutable object (the same `HiPaySettings` type used on Android/CMP), intended to be shared
+/// across components; we keep the 0.2.0 `Sendable` conformance rather than break source compatibility.
+public struct HiPayConfiguration: @unchecked Sendable {
     public let username: String
     public let password: String
     public let environment: HiPayEnvironment
