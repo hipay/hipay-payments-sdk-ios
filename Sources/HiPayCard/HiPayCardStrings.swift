@@ -20,9 +20,12 @@ public enum HiPayCardStrings {
     public static var localeOverride: Locale?
 
     /// Localized text for a shared card-entry key.
-    public static func localized(_ key: CardEntryStringKey) -> String {
+    ///
+    /// Precedence: the per-surface ``localeOverride`` static → the SDK-wide `override` (from
+    /// `HiPayConfiguration.settings`) → the device locale. All matched case-insensitively.
+    public static func localized(_ key: CardEntryStringKey, override settingsOverride: Locale? = nil) -> String {
         let name = key.name
-        if let override = localeOverride, let code = override.languageCode {
+        if let forced = localeOverride ?? settingsOverride, let code = forced.languageCode?.lowercased() {
             // Forced language: resolve from its catalog; if that language has no
             // catalog, fall back to the EN baseline — never silently to the
             // device locale (review P3, matches `defaultLocalization`).

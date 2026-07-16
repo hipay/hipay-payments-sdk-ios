@@ -1,5 +1,6 @@
 import Foundation
 import AuthenticationServices
+import Combine
 import UIKit
 import HiPayCore
 import HiPayFullservice
@@ -206,6 +207,15 @@ public final class HiPayCardEntryController: ObservableObject {
     private var resolvedNetworks: [HiPayCardNetwork] = []
     private var allowedKmp: [CardNetwork] { allowedNetworks.map { $0.kmpNetwork } }
 
+    /// SDK-wide forced locale from `configuration.settings` (or nil), as a `Locale`. The per-surface
+    /// `HiPayCardStrings.localeOverride` still takes precedence; the view passes this to `loc`.
+    var settingsLocaleOverride: Locale? {
+        guard let code = configuration.settings?.localeOverrideValue else { return nil }
+        return Locale(identifier: code)
+    }
+
+    private var localeCancel: (() -> Void)?
+
     public init(
         configuration: HiPayConfiguration,
         allowedNetworks: [HiPayCardNetwork] = [],
@@ -214,7 +224,14 @@ public final class HiPayCardEntryController: ObservableObject {
         self.configuration = configuration
         self.allowedNetworks = allowedNetworks
         self.oneClickEnabled = oneClickEnabled
+        // Re-render the card when the shared HiPaySettings language changes at runtime (no re-init).
+        // The shared settings is the KMP type; bridge its change listener to a SwiftUI republish.
+        localeCancel = configuration.settings?.addLocaleListener { [weak self] _ in
+            DispatchQueue.main.async { self?.objectWillChange.send() }
+        }
     }
+
+    deinit { localeCancel?() }
 
     /// The host picks one of `networks` (co-branding choice). Ignored if the
     /// network is not among the currently offered ones.
@@ -416,7 +433,7 @@ public final class HiPayCardEntryController: ObservableObject {
     // Localized message for a reason, or nil for `.valid` (value-free, NFR2).
     private func message(for reason: ValidationReason) -> String? {
         guard let key = reason.messageKey() else { return nil }
-        return HiPayCardStrings.localized(key)
+        return HiPayCardStrings.localized(key, override: settingsLocaleOverride)
     }
 
     /// Inline error for each field — nil when the field has not blurred yet or

@@ -80,7 +80,7 @@ final class HiPayCardSecureStoreTests: XCTestCase {
     // Same namespace the factory derives (same username/environment through the KMP bridge).
     private var testConfigNamespace: String {
         RawSecureStoreKt.secureCardStoreNamespace(
-            config: HiPayConfig(username: "test-user", password: "pw", environment: .stage)
+            config: HiPayConfig(username: "test-user", password: "pw", environment: .stage, settings: nil)
         )
     }
 

@@ -54,7 +54,9 @@ public struct HiPayCardEntryView: View {
         self.setsAccessibilityOrder = setsAccessibilityOrder
     }
 
-    private func loc(_ key: CardEntryStringKey) -> String { HiPayCardStrings.localized(key) }
+    private func loc(_ key: CardEntryStringKey) -> String {
+        HiPayCardStrings.localized(key, override: controller.settingsLocaleOverride)
+    }
 
     // Themed placeholder (SwiftUI styles placeholders via the `prompt` Text, not the field's
     // foreground). The default placeholderColor matches the system placeholder gray, so the
