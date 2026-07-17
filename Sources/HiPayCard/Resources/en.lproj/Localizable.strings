@@ -21,7 +21,7 @@
 "ERROR_INVALID_CVV" = "Invalid security code";
 "ERROR_INCOMPLETE_CVV" = "Security code is incomplete";
 "ERROR_HOLDER_TOO_LONG" = "Cardholder name is too long";
-"ERROR_NETWORK_NOT_AUTHORIZED" = "This card network is not accepted";
+"ERROR_NETWORK_NOT_AUTHORIZED" = "Card type not allowed";
 "LABEL_SAVED_CARDS" = "Saved cards";
 "LABEL_NEW_CARD" = "New card";
 "LABEL_SAVE_CARD" = "Save this card";

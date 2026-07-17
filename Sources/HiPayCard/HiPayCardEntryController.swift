@@ -195,6 +195,13 @@ public final class HiPayCardEntryController: ObservableObject {
     private lazy var savedCardStore = SavedCardStoreBox(configuration: configuration)
     // BIN already resolved against the backend — avoids re-querying per keystroke.
     private var lastResolvedDigits: String?
+
+    /// PAN whose backend BIN verdict left NO allowed network — the only trigger
+    /// for the "not authorized" error (contract 2026-07-17). Local detection alone
+    /// must never show it: a co-branded card (e.g. CB+Visa with only CB allowed)
+    /// locally detects the disallowed brand and would flash a false error until
+    /// the verdict lands. @Published so the view re-renders when the verdict does.
+    @Published private var unauthorizedDigits: String?
     // True only after an explicit user tap — so a backend refinement keeps the
     // user's co-brand choice but otherwise re-defaults to the domestic network.
     private var userDidSelect = false
@@ -318,7 +325,13 @@ public final class HiPayCardEntryController: ObservableObject {
             )
             guard digits == panDigits else { return } // user kept typing
             let resolved = info.resolvedNetworks().compactMap { HiPayCardNetwork($0) }
-            if !resolved.isEmpty { setNetworks(resolved) }
+            if !resolved.isEmpty {
+                setNetworks(resolved)
+                // The vault identified the card but the allow-list keeps none of its
+                // networks (offered — `networks` — is empty) → the contractual
+                // "not authorized" error (networkError).
+                unauthorizedDigits = networks.isEmpty ? digits : nil
+            }
         } catch {
             // Resolution failed (offline, rejected): keep the local single icon
             // and allow a retry of the same number on the next edit.
@@ -468,10 +481,12 @@ public final class HiPayCardEntryController: ObservableObject {
         allowedNetworks.isEmpty || resolvedNetworks.isEmpty || !networks.isEmpty
     }
 
-    /// "Network not authorized" inline message — shown under the number field
-    /// once it has blurred and the card's network is not accepted (value-free).
+    /// "Network not authorized" inline message — backend-verdict-gated
+    /// (contractual, not blur-gated unlike expiry/CVV; value-free): shown as
+    /// soon as the BIN verdict for the CURRENT number leaves no allowed
+    /// network. The comparison with panDigits clears it on any further edit.
     var networkError: String? {
-        guard numberBlurred, !isNetworkAuthorized else { return nil }
+        guard let digits = unauthorizedDigits, digits == panDigits else { return nil }
         return message(for: ValidationReason.networkNotAuthorized)
     }
 
