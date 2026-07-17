@@ -196,6 +196,11 @@ public final class HiPayCardEntryController: ObservableObject {
     // BIN already resolved against the backend — avoids re-querying per keystroke.
     private var lastResolvedDigits: String?
 
+    /// In-module test seam: unit tests fake the backend co-brand verdict through this
+    /// (no network); nil in production — `resolveNetworks` then calls the real
+    /// `tokenizer`. Same convention as the Android/CMP controllers' resolver seams.
+    var cardInfoResolver: ((String) async throws -> CardInfo)?
+
     /// PAN whose backend BIN verdict left NO allowed network — the only trigger
     /// for the "not authorized" error (contract 2026-07-17). Local detection alone
     /// must never show it: a co-branded card (e.g. CB+Visa with only CB allowed)
@@ -320,9 +325,14 @@ public final class HiPayCardEntryController: ObservableObject {
     private func resolveNetworks(for digits: String) async {
         let year = String((Calendar.current.component(.year, from: Date())) + 1)
         do {
-            let info = try await tokenizer.resolveCardInfo(
-                cardNumber: digits, expiryMonth: "12", expiryYear: year
-            )
+            let info: CardInfo
+            if let resolver = cardInfoResolver {
+                info = try await resolver(digits)
+            } else {
+                info = try await tokenizer.resolveCardInfo(
+                    cardNumber: digits, expiryMonth: "12", expiryYear: year
+                )
+            }
             guard digits == panDigits else { return } // user kept typing
             let resolved = info.resolvedNetworks().compactMap { HiPayCardNetwork($0) }
             if !resolved.isEmpty {
@@ -350,8 +360,13 @@ public final class HiPayCardEntryController: ObservableObject {
         networks = offered
         // Keep an EXPLICIT user choice if still offered; otherwise default to
         // the first (the domestic co-brand on a backend refinement — e.g. CB).
-        if userDidSelect, let sel = selectedNetwork, offered.contains(sel) { return }
-        selectedNetwork = offered.first
+        if !userDidSelect || selectedNetwork.map({ offered.contains($0) }) != true {
+            selectedNetwork = offered.first
+        }
+        // The effective network (selected co-brand) may differ from the locally detected
+        // one and change the CVC policy (e.g. a backend-resolved co-branded Maestro drops
+        // it). Re-cap / clear a now-stale CVC (parity with Android's applyOffered).
+        cvc = isCvcRequired ? String(cvc.prefix(cvcMaxLength)) : ""
     }
 
     /// Expiry as "MM/YY": the slash is appended as soon as the month's 2
@@ -387,8 +402,15 @@ public final class HiPayCardEntryController: ObservableObject {
         expiry.count == 5 ? "20" + expiry.suffix(2) : ""
     }
 
-    var network: CardNetwork { CardNetworks.shared.detect(number: panDigits) }
-    var isCvcRequired: Bool { CardNetworks.shared.isCvcRequired(network: network) }
+    /// Effective network: the selected co-brand when present, else local detection —
+    /// the CVC policy follows the payer's co-brand choice (Android/CMP parity).
+    var network: CardNetwork {
+        selectedNetwork?.kmpNetwork ?? CardNetworks.shared.detect(number: panDigits)
+    }
+    // Co-brand aware: a mono Maestro requires a CVC, a co-branded one does not.
+    var isCvcRequired: Bool {
+        CardNetworks.shared.isCvcRequired(network: network, offered: networks.map(\.kmpNetwork))
+    }
     var cvcMaxLength: Int { Int(CardNetworks.shared.cvcLength(network: network)) }
     var isNumberComplete: Bool { CardNetworks.shared.isNumberComplete(number: panDigits) }
     var isExpiryComplete: Bool { expiry.count == 5 }
@@ -467,7 +489,9 @@ public final class HiPayCardEntryController: ObservableObject {
     }
     var cvcError: String? {
         guard cvcBlurred else { return nil }
-        return message(for: CardFieldValidation.shared.cvcReason(cvc: cvc, network: network))
+        return message(for: CardFieldValidation.shared.cvcReason(
+            cvc: cvc, network: network, offered: networks.map(\.kmpNetwork)
+        ))
     }
 
     // MARK: - Allowed networks (story 5.7 / D13)
