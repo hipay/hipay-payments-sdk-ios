@@ -21,6 +21,7 @@
 "ERROR_INVALID_CVV" = "Codice di sicurezza non valido";
 "ERROR_INCOMPLETE_CVV" = "Codice di sicurezza incompleto";
 "ERROR_HOLDER_TOO_LONG" = "Nome del titolare troppo lungo";
+"ERROR_HOLDER_TOO_SHORT" = "Minimo 3 caratteri";
 "ERROR_NETWORK_NOT_AUTHORIZED" = "Tipo di carta non autorizzato";
 "LABEL_SAVED_CARDS" = "Carte salvate";
 "LABEL_NEW_CARD" = "Nuova carta";

@@ -118,7 +118,9 @@ public struct HiPayCardEntryView: View {
                     .textInputAutocapitalization(.characters)
                     .autocorrectionDisabled()
                     .focused($focus, equals: .holder)
-                    .modifier(EntryFieldStyle(theme: theme, valid: controller.isHolderAcceptable))
+                    // Border goes invalid WITH the visible error (blur-gated) — never
+                    // mid-typing (Android/CMP parity).
+                    .modifier(EntryFieldStyle(theme: theme, valid: controller.holderError == nil))
                     .onChange(of: controller.holder) { _ in controller.holderEdited() }
                     .accessibilityLabel(loc(.labelHolder))
                     .accessibilityIdentifier("hipay.card.holder")
@@ -137,7 +139,7 @@ public struct HiPayCardEntryView: View {
                     .textContentType(.creditCardNumber)
                     .autocorrectionDisabled()
                     .focused($focus, equals: .number)
-                    .modifier(EntryFieldStyle(theme: theme, valid: controller.isNumberAcceptable))
+                    .modifier(EntryFieldStyle(theme: theme, valid: controller.numberSlotError == nil))
                     // a11y modifiers BEFORE the overlay so they bind to the field
                     // only and do NOT subsume the network chips' own a11y.
                     .accessibilityLabel(loc(.labelNumber))
@@ -164,7 +166,7 @@ public struct HiPayCardEntryView: View {
                         .keyboardType(.numberPad)
                         .autocorrectionDisabled()
                         .focused($focus, equals: .expiry)
-                        .modifier(EntryFieldStyle(theme: theme, valid: controller.isExpiryAcceptable))
+                        .modifier(EntryFieldStyle(theme: theme, valid: controller.expiryError == nil))
                         .onChange(of: controller.expiry) { _ in
                             controller.expiryEdited()
                             guard controller.isExpiryComplete else { return }
@@ -188,7 +190,7 @@ public struct HiPayCardEntryView: View {
                         .focused($focus, equals: .cvc)
                         .disabled(!controller.isCvcRequired)
                         .opacity(controller.isCvcRequired ? 1 : 0.4)
-                        .modifier(EntryFieldStyle(theme: theme, valid: controller.isCvcAcceptable))
+                        .modifier(EntryFieldStyle(theme: theme, valid: controller.cvcError == nil))
                         .accessibilityLabel(cvvLabel)
                         .accessibilityIdentifier("hipay.card.cvc")
                         // Info affordance INSIDE the field, right-aligned (a11y modifiers

@@ -264,10 +264,11 @@ public final class HiPayCardEntryController: ObservableObject {
 
     // Each edit is a fresh payment intent → it supersedes a showing one-click error.
 
-    /// Holder name, forced to upper case (max 60 chars, FR11).
+    /// Holder name, shaped by the shared sanitizer (KMP): uppercased; letters,
+    /// spaces and - ' . accepted; at most 8 digits; hard-capped at 60 chars.
     func holderEdited() {
         lastOneClickError = nil
-        let formatted = String(holder.uppercased().prefix(60))
+        let formatted = CardValidators.shared.sanitizeHolder(input: holder)
         if formatted != holder { holder = formatted }
     }
 
@@ -275,9 +276,12 @@ public final class HiPayCardEntryController: ObservableObject {
     /// (Amex 4-6-5, others groups of 4 — KMP rules).
     func numberEdited() {
         lastOneClickError = nil
-        // Explicit 19-digit cap (max PAN length) — don't rely on format()'s
-        // group template as the de-facto length limit.
-        let capped = String(cardNumber.filter(\.isNumber).prefix(19))
+        // Cap to the DETECTED network's complete length (Android/CMP parity):
+        // Visa 16 / Amex 15 / BCMC 17, 19 while UNKNOWN so early typing is
+        // never blocked. Detect on the new digits.
+        let digits = cardNumber.filter(\.isNumber)
+        let detected = CardNetworks.shared.detect(number: digits)
+        let capped = String(digits.prefix(Int(CardNetworks.shared.completionLength(network: detected))))
         let formatted = CardNetworks.shared.format(number: capped)
         if formatted != cardNumber { cardNumber = formatted }
 
@@ -416,21 +420,6 @@ public final class HiPayCardEntryController: ObservableObject {
     var isExpiryComplete: Bool { expiry.count == 5 }
     var isCvcComplete: Bool { !isCvcRequired || cvc.count == cvcMaxLength }
 
-    // Live validity — untouched (empty) fields are not flagged.
-    var isNumberAcceptable: Bool {
-        panDigits.isEmpty || CardValidators.shared.isCardNumberValid(number: panDigits)
-    }
-    var isExpiryAcceptable: Bool {
-        expiry.isEmpty || !isExpiryComplete
-            || CardValidators.shared.isExpiryDateValid(month: expiryMonth, year: expiryYear)
-    }
-    var isHolderAcceptable: Bool {
-        CardValidators.shared.isHolderValid(holder: holder)
-    }
-    var isCvcAcceptable: Bool {
-        CardValidators.shared.isCvcValid(cvc: cvc)
-    }
-
     // MARK: - Inline field errors (story 5.5)
 
     /// The component's fields, in traversal order (matches the 5.4 a11y sort
@@ -521,8 +510,35 @@ public final class HiPayCardEntryController: ObservableObject {
     /// a restrictive allowed list, a still-incomplete card whose LOCAL network is
     /// disallowed may briefly show "not accepted" until backend resolution adds
     /// an allowed co-brand — it clears then.)
+    /// Unrepairable prefix — no supported network can ever match the typed
+    /// digits (e.g. leading "1" or "30"). Immediate like `networkError` (no
+    /// blur gate): further typing cannot fix it, so waiting for focus loss
+    /// only delays the user.
+    var patternError: String? {
+        guard !panDigits.isEmpty,
+              !CardNetworks.shared.isPrefixViable(number: panDigits) else { return nil }
+        return message(for: ValidationReason.invalidNumber)
+    }
+
+    /// Locally UNAMBIGUOUS network rejection — shown immediately during focus (not
+    /// blur-gated, no backend needed) when the detected network can never be a co-brand
+    /// of any allowed one (e.g. Amex detected, only CB allowed). The AMBIGUOUS cases
+    /// (Visa/MC detected with an allowed domestic co-brand like CB) stay backend-gated
+    /// via `networkError` — a real co-branded card is never flashed as rejected while
+    /// typing (contract 2026-07-17 + refinement 2026-07-20). Guarded on an empty offered
+    /// set so a resolved allowed co-brand always wins.
+    var localNetworkError: String? {
+        guard networks.isEmpty,
+              AllowedNetworks.shared.isLocallyUnauthorized(
+                  detected: CardNetworks.shared.detect(number: panDigits), allowed: allowedKmp
+              ) else { return nil }
+        return message(for: ValidationReason.networkNotAuthorized)
+    }
+
     var numberSlotError: (message: String, id: String)? {
         if let e = networkError { return (e, "hipay.card.error.network") }
+        if let e = patternError { return (e, "hipay.card.error.number") }
+        if let e = localNetworkError { return (e, "hipay.card.error.network") }
         if let e = numberError { return (e, "hipay.card.error.number") }
         return nil
     }
@@ -543,9 +559,13 @@ public final class HiPayCardEntryController: ObservableObject {
     public var canPay: Bool {
         (oneClickEnabled && selectedSavedCard != nil)
             || (!holder.isEmpty
+                && CardValidators.shared.isHolderLongEnough(holder: holder)
                 && CardValidators.shared.isCardNumberValid(number: panDigits)
+                && CardNetworks.shared.isPrefixViable(number: panDigits)
                 && isExpiryComplete
                 && CardValidators.shared.isExpiryDateValid(month: expiryMonth, year: expiryYear)
+                && CardValidators.shared.isExpiryYearWithinHorizon(
+                    year: expiryYear, maxYearsAhead: CardValidators.shared.EXPIRY_HORIZON_YEARS)
                 && isCvcComplete
                 && isNetworkAuthorized) // a disallowed network blocks pay
     }
