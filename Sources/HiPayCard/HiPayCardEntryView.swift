@@ -43,6 +43,8 @@ public struct HiPayCardEntryView: View {
     @State private var savedCardsExpanded = false
     // The saved card pending deletion — drives the confirmation dialog (UI-local, not the controller).
     @State private var cardPendingDelete: HiPaySavedCard?
+    // The saved card whose left-swipe trash action is currently revealed (one at a time).
+    @State private var swipeRevealedCard: HiPaySavedCard?
 
     public init(
         controller: HiPayCardEntryController,
@@ -239,6 +241,8 @@ public struct HiPayCardEntryView: View {
         // Simple platform-standard expand/collapse when the selection changes.
         .animation(.default, value: controller.selectedSavedCard)
         .onChange(of: controller.selectedSavedCard) { newSelection in
+            // A (re)selection snaps any revealed swipe shut so no orphaned trash lingers.
+            swipeRevealedCard = nil
             guard let newSelection else { return }
             // Drop an open CVV help: the entry fields are collapsing, and it must not
             // re-appear unprompted when "New card" is next expanded.
@@ -309,7 +313,7 @@ public struct HiPayCardEntryView: View {
     /// most-recent first, selection = border) and "New card" (an actionable header whose chevron
     /// shows the expanded state). Exactly one selection at all times; VoiceOver reads the localized
     /// card label — never the bullets. When more cards are stored a "Show more / Show less" toggle
-    /// reveals or hides the rest (story 12-9); the list force-expands (and "Show less" is disabled)
+    /// reveals or hides the rest; the list force-expands (and "Show less" is disabled)
     /// while the selected card sits beyond the fold, so the paying card is never hidden. Every saved
     /// card is retained by the store — the display count only bounds what is shown by default.
     @ViewBuilder private var savedCardsSections: some View {
@@ -322,8 +326,8 @@ public struct HiPayCardEntryView: View {
             }
         } else {
             let cards = controller.savedCards
-            // Story 12-9: show the most-recent `displayCount` cards; a "Show more / Show less" toggle
-            // reveals or hides the rest. This bounds only what is shown — every saved card is retained
+            // Show the most-recent `displayCount` cards; a "Show more / Show less" toggle reveals or
+            // hides the rest. This bounds only what is shown — every saved card is retained
             // by the store (cap 20). If the selected card sits beyond the fold the list force-expands
             // (`|| selectionBeyondFold`) so the paying card is never hidden.
             let displayCount = controller.savedCardsDisplayCount
@@ -424,9 +428,46 @@ public struct HiPayCardEntryView: View {
         .accessibilityAction(named: Text(loc(.labelDeleteCard))) {
             if !controller.isProcessing { cardPendingDelete = card }
         }
+        // Left-swipe reveals a trailing trash action; tapping it opens the delete confirmation. An
+        // accidental swipe never deletes — only the trash tap (or the retained long-press / a11y
+        // "Delete" action) requests it. Reverses the earlier no-visible-delete-button behaviour.
+        let revealed = swipeRevealedCard == card
+        let row = ZStack(alignment: .trailing) {
+            if revealed {
+                Button {
+                    swipeRevealedCard = nil
+                    if !controller.isProcessing { cardPendingDelete = card }
+                } label: {
+                    Image(systemName: "trash")
+                        .foregroundColor(.red)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(loc(.labelDeleteCard))
+                .accessibilityIdentifier("hipay.card.savedcard.\(index).delete")
+            }
+            cell
+                .offset(x: revealed ? -56 : 0)
+                // A horizontal drag reveals/hides the trash; minimumDistance keeps the tap-to-select
+                // (and long-press) on the underlying button intact.
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 12)
+                        .onEnded { value in
+                            guard !controller.isProcessing else { return }
+                            withAnimation {
+                                if value.translation.width < -40 {
+                                    swipeRevealedCard = card
+                                } else if value.translation.width > 40 {
+                                    swipeRevealedCard = nil
+                                }
+                            }
+                        }
+                )
+        }
         // The cell + its inline error travel as one visual unit (the field errorSlot spacing).
         return VStack(alignment: .leading, spacing: 4) {
-            cell
+            row
             if let error {
                 errorSlot(loc(error.messageKey), id: "hipay.card.error.savedcard.\(index)")
             }
@@ -454,7 +495,7 @@ public struct HiPayCardEntryView: View {
         .accessibilityIdentifier("hipay.card.newcard")
     }
 
-    /// "Show more / Show less" disclosure toggle (story 12-9): reveals or hides the saved cards beyond
+    /// "Show more / Show less" disclosure toggle: reveals or hides the saved cards beyond
     /// the display count. A centered button whose expanded/collapsed value carries the meaning for
     /// VoiceOver (the chevron is decorative); it stays present across toggles so VoiceOver focus is
     /// retained. When [canCollapse] is false while expanded, "Show less" is disabled (the selection
