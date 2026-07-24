@@ -449,9 +449,12 @@ public struct HiPayCardEntryView: View {
             }
             cell
                 .offset(x: revealed ? -56 : 0)
-                // A horizontal drag reveals/hides the trash; minimumDistance keeps the tap-to-select
-                // (and long-press) on the underlying button intact.
-                .simultaneousGesture(
+                // A horizontal drag reveals/hides the trash. High-priority so a recognized swipe wins
+                // over the cell button — a swipe must NOT also select the card (which would change the
+                // charged card and, via .onChange, snap the just-revealed trash shut). Below
+                // minimumDistance the drag never starts, so a plain tap still selects (and long-press
+                // still requests delete).
+                .highPriorityGesture(
                     DragGesture(minimumDistance: 12)
                         .onEnded { value in
                             guard !controller.isProcessing else { return }
