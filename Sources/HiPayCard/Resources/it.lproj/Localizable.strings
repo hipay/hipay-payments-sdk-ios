@@ -34,6 +34,7 @@
 "A11Y_EXPANDED" = "espanso";
 "A11Y_COLLAPSED" = "compresso";
 "LABEL_SHOW_MORE" = "Mostra altre";
+"LABEL_SHOW_LESS" = "Mostra meno";
 /* PROVISIONAL delete copy — NOT yet legally/UX approved; finalized in a later release. */
 "LABEL_DELETE_CARD" = "Elimina carta";
 "CONFIRM_DELETE_CARD" = "Rimuovere questa carta salvata? Potrai salvarla di nuovo al prossimo pagamento.";

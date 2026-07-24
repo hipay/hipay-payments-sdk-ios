@@ -238,15 +238,16 @@ public struct HiPayCardEntryView: View {
         .task { await controller.refreshSavedCards() }
         // Simple platform-standard expand/collapse when the selection changes.
         .animation(.default, value: controller.selectedSavedCard)
-        // Forget a manual list re-expand once a saved card is (re)selected, so each fresh new-card
-        // entry starts collapsed again (the collapse-to-MRU behaviour never silently stops).
-        // Also drop an open CVV help: the entry fields are collapsing, and it must not
-        // re-appear unprompted when "New card" is next expanded.
         .onChange(of: controller.selectedSavedCard) { newSelection in
-            if newSelection != nil {
-                savedCardsExpanded = false
-                showCvvInfo = false
-            }
+            guard let newSelection else { return }
+            // Drop an open CVV help: the entry fields are collapsing, and it must not
+            // re-appear unprompted when "New card" is next expanded.
+            showCvvInfo = false
+            // Keep the paying card visible: if the (re)selected card sits beyond the default fold,
+            // force the list open and keep it open (the payer never pays with a hidden card). The
+            // "Show more / Show less" toggle otherwise owns collapse — a selection no longer collapses.
+            let idx = controller.savedCards.firstIndex(of: newSelection) ?? -1
+            if idx >= controller.savedCardsDisplayCount { savedCardsExpanded = true }
         }
         // Delete confirmation (long-press / a11y action set `cardPendingDelete`). An `.alert`
         // (not a `.confirmationDialog`) — the destructive-confirm equivalent of the Android
@@ -304,11 +305,13 @@ public struct HiPayCardEntryView: View {
 
     // MARK: - One-click sections (shared header treatment; no radio indicator by design)
 
-    /// The two one-click zones: "Saved cards" (the list of ≤3 saved cards, most-recent first,
-    /// selection = border) and "New card" (an actionable header whose chevron shows the expanded
-    /// state). Exactly one selection at all times; VoiceOver reads the localized card label — never
-    /// the bullets. The most-recent `savedCardsDisplayCount` cards are shown; when more are stored a
-    /// "Show more" control reveals the rest (story 12-9) — every saved card is retained by the store.
+    /// The two one-click zones: "Saved cards" (the most-recent `savedCardsDisplayCount` cards,
+    /// most-recent first, selection = border) and "New card" (an actionable header whose chevron
+    /// shows the expanded state). Exactly one selection at all times; VoiceOver reads the localized
+    /// card label — never the bullets. When more cards are stored a "Show more / Show less" toggle
+    /// reveals or hides the rest (story 12-9); the list force-expands (and "Show less" is disabled)
+    /// while the selected card sits beyond the fold, so the paying card is never hidden. Every saved
+    /// card is retained by the store — the display count only bounds what is shown by default.
     @ViewBuilder private var savedCardsSections: some View {
         let surface = oneClickSurface
         if controller.savedCards.isEmpty {
@@ -319,11 +322,16 @@ public struct HiPayCardEntryView: View {
             }
         } else {
             let cards = controller.savedCards
-            // Story 12-9: show the most-recent `displayCount` cards; "Show more" reveals the rest.
-            // This bounds only what is shown — every saved card is retained by the store (cap 20).
+            // Story 12-9: show the most-recent `displayCount` cards; a "Show more / Show less" toggle
+            // reveals or hides the rest. This bounds only what is shown — every saved card is retained
+            // by the store (cap 20). If the selected card sits beyond the fold the list force-expands
+            // (`|| selectionBeyondFold`) so the paying card is never hidden.
             let displayCount = controller.savedCardsDisplayCount
             let hasMore = cards.count > displayCount
-            let visibleCards = (savedCardsExpanded || !hasMore) ? cards : Array(cards.prefix(displayCount))
+            let selectedIndex = controller.selectedSavedCard.flatMap { cards.firstIndex(of: $0) } ?? -1
+            let selectionBeyondFold = selectedIndex >= displayCount
+            let expanded = savedCardsExpanded || selectionBeyondFold
+            let visibleCards = expanded ? cards : Array(cards.prefix(displayCount))
             VStack(alignment: .leading, spacing: 12) {
                 sectionHeader(loc(.labelSavedCards))
                 if surface == .section, let message = oneClickErrorMessage {
@@ -338,8 +346,8 @@ public struct HiPayCardEntryView: View {
                             : nil
                     )
                 }
-                if hasMore && !savedCardsExpanded {
-                    showMoreButton
+                if hasMore {
+                    showMoreToggle(expanded: expanded, canCollapse: !selectionBeyondFold)
                 }
                 newCardHeader
             }
@@ -446,24 +454,37 @@ public struct HiPayCardEntryView: View {
         .accessibilityIdentifier("hipay.card.newcard")
     }
 
-    /// "Show more" control (story 12-9): reveals the saved cards beyond the display count. A centered
-    /// button with a downward chevron; once tapped the full list is shown and the control disappears.
-    private var showMoreButton: some View {
-        Button { withAnimation { savedCardsExpanded = true } } label: {
+    /// "Show more / Show less" disclosure toggle (story 12-9): reveals or hides the saved cards beyond
+    /// the display count. A centered button whose expanded/collapsed value carries the meaning for
+    /// VoiceOver (the chevron is decorative); it stays present across toggles so VoiceOver focus is
+    /// retained. When [canCollapse] is false while expanded, "Show less" is disabled (the selection
+    /// sits beyond the fold — collapsing would hide the paying card).
+    private func showMoreToggle(expanded: Bool, canCollapse: Bool) -> some View {
+        Button {
+            withAnimation {
+                if expanded {
+                    if canCollapse { savedCardsExpanded = false }
+                } else {
+                    savedCardsExpanded = true
+                }
+            }
+        } label: {
             HStack(spacing: 4) {
-                Text(loc(.labelShowMore))
+                Text(loc(expanded ? .labelShowLess : .labelShowMore))
                     .font(.callout)
                     .foregroundColor(.accentColor)
-                Text("▾")
+                Text(expanded ? "▴" : "▾")
                     .font(.callout)
                     .foregroundColor(.accentColor)
-                    .accessibilityHidden(true) // decorative: the button label carries the meaning
+                    .accessibilityHidden(true) // decorative: the button value carries the meaning
             }
             .frame(maxWidth: .infinity, minHeight: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(expanded && !canCollapse) // "Show less" inert while the selection sits beyond the fold
         .accessibilityAddTraits(.isButton)
+        .accessibilityValue(expanded ? loc(.a11yExpanded) : loc(.a11yCollapsed))
         .accessibilityIdentifier("hipay.card.savedcards.showmore")
     }
 
