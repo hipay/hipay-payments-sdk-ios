@@ -43,6 +43,15 @@ final class HiPayOneClickTests: XCTestCase {
         XCTAssertEqual("411111xxxxxx1111|12|2031", wrapped.id)
     }
 
+    // Story 12-9: the display count is exposed clamped to 1...10 (default 3).
+    @MainActor
+    func test_savedCardsDisplayCount_defaultsToThreeAndClampsToOneToTen() {
+        XCTAssertEqual(3, HiPayCardEntryController(configuration: configuration).savedCardsDisplayCount)
+        XCTAssertEqual(1, HiPayCardEntryController(configuration: configuration, savedCardsDisplayCount: 0).savedCardsDisplayCount)
+        XCTAssertEqual(10, HiPayCardEntryController(configuration: configuration, savedCardsDisplayCount: 99).savedCardsDisplayCount)
+        XCTAssertEqual(5, HiPayCardEntryController(configuration: configuration, savedCardsDisplayCount: 5).savedCardsDisplayCount)
+    }
+
     @MainActor
     func test_refresh_loadsAndPreselectsThePersistedCard() async {
         XCTAssertTrue(makeStore().save(card: seededCard(), consentGiven: true))

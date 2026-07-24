@@ -307,8 +307,8 @@ public struct HiPayCardEntryView: View {
     /// The two one-click zones: "Saved cards" (the list of ≤3 saved cards, most-recent first,
     /// selection = border) and "New card" (an actionable header whose chevron shows the expanded
     /// state). Exactly one selection at all times; VoiceOver reads the localized card label — never
-    /// the bullets. While the new-card branch is active the list collapses to the most-recent card
-    /// and the "Saved cards" header gains its own chevron to re-expand (single card → no collapse).
+    /// the bullets. The most-recent `savedCardsDisplayCount` cards are shown; when more are stored a
+    /// "Show more" control reveals the rest (story 12-9) — every saved card is retained by the store.
     @ViewBuilder private var savedCardsSections: some View {
         let surface = oneClickSurface
         if controller.savedCards.isEmpty {
@@ -319,16 +319,13 @@ public struct HiPayCardEntryView: View {
             }
         } else {
             let cards = controller.savedCards
-            let newCardBranch = controller.selectedSavedCard == nil
-            let collapsible = newCardBranch && cards.count > 1
-            let showAllCards = !newCardBranch || savedCardsExpanded
-            let visibleCards = showAllCards ? cards : Array(cards.prefix(1))
+            // Story 12-9: show the most-recent `displayCount` cards; "Show more" reveals the rest.
+            // This bounds only what is shown — every saved card is retained by the store (cap 20).
+            let displayCount = controller.savedCardsDisplayCount
+            let hasMore = cards.count > displayCount
+            let visibleCards = (savedCardsExpanded || !hasMore) ? cards : Array(cards.prefix(displayCount))
             VStack(alignment: .leading, spacing: 12) {
-                if collapsible {
-                    savedCardsCollapsibleHeader
-                } else {
-                    sectionHeader(loc(.labelSavedCards))
-                }
+                sectionHeader(loc(.labelSavedCards))
                 if surface == .section, let message = oneClickErrorMessage {
                     errorSlot(message, id: "hipay.card.error.oneclick.section")
                 }
@@ -340,6 +337,9 @@ public struct HiPayCardEntryView: View {
                             ? controller.lastOneClickError.flatMap { $0.matches(card) ? $0 : nil }
                             : nil
                     )
+                }
+                if hasMore && !savedCardsExpanded {
+                    showMoreButton
                 }
                 newCardHeader
             }
@@ -446,24 +446,25 @@ public struct HiPayCardEntryView: View {
         .accessibilityIdentifier("hipay.card.newcard")
     }
 
-    /// "Saved cards" header, collapsible in the new-card branch: a button re-expanding the list.
-    private var savedCardsCollapsibleHeader: some View {
-        Button { withAnimation { savedCardsExpanded.toggle() } } label: {
-            HStack {
-                sectionHeader(loc(.labelSavedCards))
-                Spacer()
-                Text(savedCardsExpanded ? "▾" : "▸")
+    /// "Show more" control (story 12-9): reveals the saved cards beyond the display count. A centered
+    /// button with a downward chevron; once tapped the full list is shown and the control disappears.
+    private var showMoreButton: some View {
+        Button { withAnimation { savedCardsExpanded = true } } label: {
+            HStack(spacing: 4) {
+                Text(loc(.labelShowMore))
                     .font(.callout)
-                    .foregroundColor(savedCardsExpanded ? .accentColor : theme.iconColor)
-                    .accessibilityHidden(true) // decorative: the button value carries the meaning
+                    .foregroundColor(.accentColor)
+                Text("▾")
+                    .font(.callout)
+                    .foregroundColor(.accentColor)
+                    .accessibilityHidden(true) // decorative: the button label carries the meaning
             }
-            .frame(minHeight: 44)
+            .frame(maxWidth: .infinity, minHeight: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(.isButton)
-        .accessibilityValue(savedCardsExpanded ? loc(.a11yExpanded) : loc(.a11yCollapsed))
-        .accessibilityIdentifier("hipay.card.savedcards.header")
+        .accessibilityIdentifier("hipay.card.savedcards.showmore")
     }
 
     /// The shared one-click section-header treatment.

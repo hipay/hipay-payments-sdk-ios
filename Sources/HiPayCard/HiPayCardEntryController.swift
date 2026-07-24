@@ -83,6 +83,10 @@ public final class HiPayCardEntryController: ObservableObject {
     /// routes to that stored token (no CVV) — call ``selectNewCard()`` first to force card entry.
     public let oneClickEnabled: Bool
 
+    /// How many saved cards the one-click UI shows before a "Show more" control (story 12-9).
+    /// Clamped to 1...10 (default 3); bounds only the DISPLAY — every saved card is still persisted.
+    public let savedCardsDisplayCount: Int
+
     /// The saved cards offered for one-click, most recently used/saved first (expired cards
     /// purged); empty when none or not loaded. Refreshed via ``refreshSavedCards()``.
     @Published public private(set) var savedCards: [HiPaySavedCard] = []
@@ -231,11 +235,14 @@ public final class HiPayCardEntryController: ObservableObject {
     public init(
         configuration: HiPayConfiguration,
         allowedNetworks: [HiPayCardNetwork] = [],
-        oneClickEnabled: Bool = false
+        oneClickEnabled: Bool = false,
+        savedCardsDisplayCount: Int = 3
     ) {
         self.configuration = configuration
         self.allowedNetworks = allowedNetworks
         self.oneClickEnabled = oneClickEnabled
+        // Mirrors the shared Kotlin contract (SavedCardsDisplayCount.kt): default 3, clamp 1...10.
+        self.savedCardsDisplayCount = max(1, min(10, savedCardsDisplayCount))
         // Re-render the card when the shared HiPaySettings language changes at runtime (no re-init).
         // The shared settings is the KMP type; bridge its change listener to a SwiftUI republish.
         localeCancel = configuration.settings?.addLocaleListener { [weak self] _ in

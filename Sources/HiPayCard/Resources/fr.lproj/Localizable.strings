@@ -33,6 +33,7 @@
 "A11Y_SAVED_CARD" = "%1$@ se terminant par %2$@, expire %3$@";
 "A11Y_EXPANDED" = "déplié";
 "A11Y_COLLAPSED" = "replié";
+"LABEL_SHOW_MORE" = "Afficher plus";
 /* PROVISIONAL delete copy — NOT yet legally/UX approved; finalized in a later release. */
 "LABEL_DELETE_CARD" = "Supprimer la carte";
 "CONFIRM_DELETE_CARD" = "Supprimer cette carte enregistrée ? Vous pourrez l'enregistrer à nouveau lors d'un prochain paiement.";
