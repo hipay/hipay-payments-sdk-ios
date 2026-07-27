@@ -45,6 +45,10 @@ public struct HiPayCardEntryView: View {
     @State private var cardPendingDelete: HiPaySavedCard?
     // The saved card whose left-swipe trash action is currently revealed (one at a time).
     @State private var swipeRevealedCard: HiPaySavedCard?
+    // When the user asks for less motion (WCAG 2.3.3) transitions are dropped to instant.
+    // Qualified: HiPayFullservice also exports an `Environment` type, so the bare attribute is
+    // ambiguous here.
+    @SwiftUI.Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(
         controller: HiPayCardEntryController,
@@ -238,8 +242,9 @@ public struct HiPayCardEntryView: View {
         }
         // One-click: load the saved card on appearance (no-op unless opted in — fail-soft).
         .task { await controller.refreshSavedCards() }
-        // Simple platform-standard expand/collapse when the selection changes.
-        .animation(.default, value: controller.selectedSavedCard)
+        // Simple platform-standard expand/collapse when the selection changes — dropped to instant
+        // under the reduce-motion accessibility setting (WCAG 2.3.3).
+        .animation(reduceMotion ? nil : .default, value: controller.selectedSavedCard)
         .onChange(of: controller.selectedSavedCard) { newSelection in
             // A (re)selection snaps any revealed swipe shut so no orphaned trash lingers.
             swipeRevealedCard = nil
@@ -458,7 +463,7 @@ public struct HiPayCardEntryView: View {
                     DragGesture(minimumDistance: 12)
                         .onEnded { value in
                             guard !controller.isProcessing else { return }
-                            withAnimation {
+                            withAnimation(reduceMotion ? nil : .default) {
                                 if value.translation.width < -40 {
                                     swipeRevealedCard = card
                                 } else if value.translation.width > 40 {
@@ -505,7 +510,7 @@ public struct HiPayCardEntryView: View {
     /// sits beyond the fold — collapsing would hide the paying card).
     private func showMoreToggle(expanded: Bool, canCollapse: Bool) -> some View {
         Button {
-            withAnimation {
+            withAnimation(reduceMotion ? nil : .default) {
                 if expanded {
                     if canCollapse { savedCardsExpanded = false }
                 } else {
