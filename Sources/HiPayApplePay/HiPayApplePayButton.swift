@@ -11,16 +11,16 @@
 import SwiftUI
 import PassKit
 
-/// Apple Pay button style — mirrors `PKPaymentButtonStyle` (the parity with the shared KMP
-/// `HiPayApplePayButtonStyle` is asserted by a test). No custom styling is possible (Apple rule).
+/// Apple Pay button style — mirrors `PKPaymentButtonStyle`; the shared KMP `HiPayApplePayButtonStyle`
+/// exposes the same set. No custom styling is possible (Apple rule).
 public enum HiPayApplePayButtonStyle: CaseIterable {
-    /// Dark fill, for a light background (default).
+    /// Dark fill, for a light background.
     case black
     /// White fill without a border, for a coloured/dark contrasting background.
     case white
     /// White fill with a black outline, for a light/white background.
     case whiteOutline
-    /// Follows the system light/dark mode (iOS 14+).
+    /// Follows the system light/dark mode (iOS 14+); the default.
     case automatic
 
     var pkStyle: PKPaymentButtonStyle {
@@ -83,11 +83,6 @@ public struct HiPayApplePayButton: View {
     private let isAvailable: Bool
     private let onTap: () -> Void
 
-    // Default availability check: the device must have a usable card of a network we support
-    // (canMakePayments(usingNetworks:) — stricter than the network-less canMakePayments(), which is
-    // true on any Apple-Pay-capable device). Refined by full routable-network eligibility later.
-    private static let defaultNetworks: [PKPaymentNetwork] = [.visa, .masterCard, .maestro, .cartesBancaires]
-
     public init(
         style: HiPayApplePayButtonStyle = .automatic,
         type: HiPayApplePayButtonType = .buy,
@@ -97,7 +92,7 @@ public struct HiPayApplePayButton: View {
         self.style = style
         self.type = type
         self.isAvailable = isAvailable
-            ?? PKPaymentAuthorizationController.canMakePayments(usingNetworks: Self.defaultNetworks)
+            ?? PKPaymentAuthorizationController.canMakePayments()
         self.onTap = onTap
     }
 
