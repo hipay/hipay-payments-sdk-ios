@@ -26,7 +26,7 @@ final class HiPayCardCoBrandTests: XCTestCase {
         brand: String,
         domesticNetwork: String
     ) -> HiPayCardEntryController {
-        let controller = HiPayCardEntryController(configuration: configuration, allowedNetworks: allowed)
+        let controller = HiPayCardEntryController(configuration: configuration, allowedNetworks: allowed).withOfflineCeiling()
         controller.cardInfoResolver = { _ in
             CardInfo(brand: brand, domesticNetwork: domesticNetwork, cardType: nil, issuer: nil, country: nil)
         }

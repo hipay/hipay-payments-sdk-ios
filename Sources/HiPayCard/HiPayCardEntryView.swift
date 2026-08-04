@@ -234,6 +234,10 @@ public struct HiPayCardEntryView: View {
             }
             } // showEntryFields
         }
+        // Account network ceiling: resolved on appearance, so what may be offered at all is known
+        // before the payer has typed a BIN — a brand icon must never be shown for a network the
+        // account refuses.
+        .task { await controller.loadAccountNetworksIfNeeded() }
         // One-click: load the saved card on appearance (no-op unless opted in — fail-soft).
         .task { await controller.refreshSavedCards() }
         // Simple platform-standard expand/collapse when the selection changes.
