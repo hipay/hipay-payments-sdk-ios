@@ -3,8 +3,8 @@
 
 "LABEL_HOLDER" = "Nom du titulaire";
 "LABEL_NUMBER" = "Numéro de carte";
-"LABEL_EXPIRY" = "Date d'expiration";
-"LABEL_CVV" = "Code de sécurité";
+"LABEL_EXPIRY" = "Expiration";
+"LABEL_CVV" = "CVV";
 
 "PLACEHOLDER_HOLDER" = "Nom sur la carte";
 "PLACEHOLDER_NUMBER" = "1234 5678 9012 3456";
@@ -12,14 +12,14 @@
 "PLACEHOLDER_CVV" = "CVV";
 
 "CVV_OPTIONAL" = "Facultatif";
-"CVV_TOOLTIP" = "Saisissez le CVV ou code de sécurité de votre carte.";
+"CVV_TOOLTIP" = "Saisissez le CVV de votre carte.";
 
 "ERROR_INVALID_NUMBER" = "Numéro de carte invalide";
 "ERROR_INCOMPLETE_NUMBER" = "Numéro de carte incomplet";
 "ERROR_INVALID_EXPIRY" = "Date d'expiration invalide";
 "ERROR_EXPIRED" = "Cette carte a expiré";
-"ERROR_INVALID_CVV" = "Code de sécurité invalide";
-"ERROR_INCOMPLETE_CVV" = "Code de sécurité incomplet";
+"ERROR_INVALID_CVV" = "CVV invalide";
+"ERROR_INCOMPLETE_CVV" = "CVV incomplet";
 "ERROR_HOLDER_TOO_LONG" = "Nom du titulaire trop long";
 "ERROR_HOLDER_TOO_SHORT" = "Minimum 3 caractères";
 "ERROR_NETWORK_NOT_AUTHORIZED" = "Type de carte non autorisé";
