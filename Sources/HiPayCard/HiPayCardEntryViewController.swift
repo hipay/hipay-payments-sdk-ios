@@ -9,7 +9,7 @@ public enum HiPayCardEntryViewController {
     @MainActor
     public static func make(
         controller: HiPayCardEntryController,
-        theme: HiPayCardTheme = .default
+        theme: HiPayCardTheme = .hipayDefault
     ) -> UIViewController {
         UIHostingController(rootView: HiPayCardEntryView(controller: controller, theme: theme))
     }

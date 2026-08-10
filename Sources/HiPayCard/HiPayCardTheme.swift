@@ -72,10 +72,6 @@ public struct HiPayCardTheme: Equatable, Sendable {
     /// `HiPayCardEntryStyle.hipayDefault` (identical baseline across platforms).
     public static let hipayDefault = HiPayCardTheme()
 
-    /// Pre-existing name of the default look, kept for source compatibility.
-    @available(*, deprecated, renamed: "hipayDefault")
-    public static let `default` = hipayDefault
-
     /// Maps the shared platform-neutral contract to SwiftUI types.
     public init(style: HiPayCardEntryStyle = HiPayCardEntryStyle.companion.hipayDefault) {
         textColor = Color(hiPayArgb: style.textColor)
