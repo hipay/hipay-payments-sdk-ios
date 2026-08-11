@@ -167,7 +167,7 @@ public final class HiPayCardEntryController: ObservableObject {
         // Keep only cards whose resolved network the merchant accepts (empty allow-list → all).
         let filtered = kmpCards.filter { card in
             guard let net = CardNetworks.shared.fromApiBrand(brand: card.network) else { return true }
-            return AllowedNetworks.shared.isAuthorized(network: net, allowed: allowedKmp)
+            return AllowedNetworks.shared.isAuthorized(network: net, allowed: effectiveAllowedKmp)
         }
         let cards = filtered.map(HiPaySavedCard.init)
         let firstLoad = !hasLoadedOnce
@@ -223,6 +223,53 @@ public final class HiPayCardEntryController: ObservableObject {
     private var resolvedNetworks: [HiPayCardNetwork] = []
     private var allowedKmp: [CardNetwork] { allowedNetworks.map { $0.kmpNetwork } }
 
+    /// Currency the account's accepted card products are resolved for — a contract can differ per
+    /// currency. Only used for that resolution; `pay(...)` still takes its own currency.
+    private let accountCurrency: String
+    /// Card products this ACCOUNT is contracted for. `nil` = not known yet (query pending, or it
+    /// failed) → the ceiling stays open and `allowedNetworks` is used as-is. An EMPTY set is a
+    /// verdict, not an absence: the account accepts no card at all.
+    @Published private var accountNetworks: Set<CardNetwork>?
+    /// Guards the one query per controller; reset on failure so a later attempt retries.
+    @Published private var accountQueryStarted = false
+    /// Set once the first attempt has failed, and never cleared: from then on the component behaves
+    /// as it did before the ceiling existed. Without it a retry would hide the brand icon again, so
+    /// the payer would watch it blink on every attempt.
+    @Published private var accountQueryFailed = false
+
+    /// The ceiling is being fetched and nothing is known yet. While this holds, local BIN detection
+    /// must NOT show a brand icon: whether that network is offerable at all is exactly what is in
+    /// flight, and showing a logo we may have to take back is worse than showing it a beat later.
+    /// True only during the FIRST attempt — a failed query degrades to the pre-ceiling behaviour.
+    private var accountCeilingPending: Bool {
+        accountQueryStarted && accountNetworks == nil && !accountQueryFailed
+    }
+    /// The allowed set every check must read: the account ceiling, narrowed by `allowedNetworks`.
+    /// The intersection itself is the commonMain one (no set logic in Swift).
+    /// `nil` = no restriction at all; an EMPTY array = a restriction that authorizes nothing (an
+    /// account contracted for no card). The two must never be conflated — see `AllowedNetworks`.
+    private var effectiveAllowedKmp: [CardNetwork]? {
+        AllowedNetworks.shared.effectiveAllowed(account: accountNetworks, integrator: allowedKmp)
+    }
+    /// In-module test seam for the account ceiling — same convention as `cardInfoResolver`.
+    var accountNetworksResolver: (() async throws -> Set<CardNetwork>)?
+
+    /// Test seam that presets the ceiling SYNCHRONOUSLY. A test asserting network chips must not race
+    /// an asynchronous fetch: with only `accountNetworksResolver` the ceiling lands a `Task` later, the
+    /// pending state legitimately suppresses every chip until then, and the assertion becomes
+    /// timing-dependent. Tests that are ABOUT the fetch keep using the resolver.
+    func presetAccountNetworks(_ accepted: Set<CardNetwork>) {
+        accountNetworks = accepted
+        accountQueryStarted = true
+    }
+
+    /// The VAULT verdict and the PAN it belongs to. Kept apart from `resolvedNetworks`, which
+    /// `setNetworks` also fills from local BIN detection: re-applying a ceiling from that would let
+    /// local detection alone raise the "not authorized" error on an ambiguous co-brand, which the
+    /// contract forbids, and could apply one card's networks to another card's number.
+    private var vaultNetworks: [HiPayCardNetwork] = []
+    private var vaultDigits: String?
+
     /// SDK-wide forced locale from `configuration.settings` (or nil), as a `Locale`. The per-surface
     /// `HiPayCardStrings.localeOverride` still takes precedence; the view passes this to `loc`.
     var settingsLocaleOverride: Locale? {
@@ -236,13 +283,15 @@ public final class HiPayCardEntryController: ObservableObject {
         configuration: HiPayConfiguration,
         allowedNetworks: [HiPayCardNetwork] = [],
         oneClickEnabled: Bool = false,
-        savedCardsDisplayCount: Int = 3
+        savedCardsDisplayCount: Int = 3,
+        currency: String = "EUR"
     ) {
         self.configuration = configuration
         self.allowedNetworks = allowedNetworks
         self.oneClickEnabled = oneClickEnabled
         // Mirrors the shared Kotlin contract (SavedCardsDisplayCount.kt): default 3, clamp 1...10.
         self.savedCardsDisplayCount = max(1, min(10, savedCardsDisplayCount))
+        self.accountCurrency = currency
         // Re-render the card when the shared HiPaySettings language changes at runtime (no re-init).
         // The shared settings is the KMP type; bridge its change listener to a SwiftUI republish.
         localeCancel = configuration.settings?.addLocaleListener { [weak self] _ in
@@ -318,18 +367,27 @@ public final class HiPayCardEntryController: ObservableObject {
         // valid before our 17-digit "complete" heuristic, and the legacy
         // likewise triggers on validity. Local detection drives the icon
         // meanwhile.
+        // Nothing is offered while the account ceiling is still pending — see `accountCeilingPending`.
+        let locallyDetected = accountCeilingPending ? [] : (local.map { [$0] } ?? [])
         guard CardValidators.shared.isCardNumberValid(number: digits) else {
             lastResolvedDigits = nil
             userDidSelect = false
-            setNetworks(local.map { [$0] } ?? [])
+            setNetworks(locallyDetected)
             return
         }
+        // Same gate as the BIN verdict, kept identical across the three channels: the account
+        // ceiling is asked once per controller, the verdict once per distinct PAN.
+        ensureAccountNetworks()
         guard digits != lastResolvedDigits else { return }
         lastResolvedDigits = digits
         // New card: drop any prior manual choice and show its local icon
         // immediately (clears a stale co-brand from the previous number).
         userDidSelect = false
-        setNetworks(local.map { [$0] } ?? [])
+        setNetworks(locallyDetected)
+        // A verdict belongs to the PAN it was resolved for: drop the previous one now, or a ceiling
+        // landing before the new verdict would apply the old card's networks.
+        vaultNetworks = []
+        vaultDigits = nil
         Task { await resolveNetworks(for: digits) }
     }
 
@@ -347,16 +405,97 @@ public final class HiPayCardEntryController: ObservableObject {
             guard digits == panDigits else { return } // user kept typing
             let resolved = info.resolvedNetworks().compactMap { HiPayCardNetwork($0) }
             if !resolved.isEmpty {
-                setNetworks(resolved)
-                // The vault identified the card but the allow-list keeps none of its
-                // networks (offered — `networks` — is empty) → the contractual
-                // "not authorized" error (networkError).
-                unauthorizedDigits = networks.isEmpty ? digits : nil
+                // Kept so a later-arriving ceiling can be applied to this verdict without a second
+                // vault call, and under the PAN it was resolved for.
+                vaultNetworks = resolved
+                vaultDigits = digits
+                // Whether these networks are offerable at all is still in flight: applying them now
+                // would show a brand icon the ceiling may withdraw a moment later. `reapplyCeiling`
+                // applies the verdict as soon as the ceiling is known.
+                guard !accountCeilingPending else { return }
+                applyVaultVerdict(digits, resolved)
             }
         } catch {
             // Resolution failed (offline, rejected): keep the local single icon
             // and allow a retry of the same number on the next edit.
             if digits == panDigits { lastResolvedDigits = nil }
+        }
+    }
+
+    /// One account-ceiling query per controller. The view asks on appearance; this is the fallback
+    /// for a host that drives the controller without the view.
+    private func ensureAccountNetworks() {
+        guard !accountQueryStarted else { return }
+        accountQueryStarted = true
+        Task { await loadAccountNetworks() }
+    }
+
+    /// Resolves the networks this account is contracted for — the ceiling the merchant restriction
+    /// narrows. A technical failure leaves the ceiling OPEN (unchanged behaviour, entry never
+    /// blocked, no error) and re-arms a retry on the next edit, exactly like `resolveNetworks`. A
+    /// successful EMPTY answer is a verdict, not a failure: the account takes no card.
+    private func loadAccountNetworks() async {
+        do {
+            if let resolver = accountNetworksResolver {
+                accountNetworks = try await resolver()
+            } else {
+                accountNetworks = try await GatewayClient(config: configuration.kmpConfig)
+                    .getAvailablePaymentProducts(
+                        paymentProducts: CardNetworks.shared.cardPaymentProductCodes,
+                        currency: accountCurrency,
+                        customerCountry: nil
+                    )
+            }
+            reapplyCeiling()
+        } catch {
+            if Task.isCancelled {
+                // The view went away mid-flight: the ceiling is neither resolved nor failed, so the
+                // one-shot guard must be released or the next appearance would never ask again.
+                accountQueryStarted = false
+                return
+            }
+            // Degrade to the pre-ceiling behaviour and re-arm a retry, without ever hiding the brand
+            // icon again (see `accountQueryFailed`).
+            accountQueryFailed = true
+            accountQueryStarted = false
+            reapplyCeiling()
+            return
+        }
+        // Deliberately OUTSIDE the `do` above: the saved-card list is filtered by the same allowed
+        // set and is loaded by a sibling `.task` reading the local Keychain — a race the network
+        // always loses — so it must be re-filtered once the ceiling is known, and its own failure
+        // must not undo the ceiling we just resolved.
+        if oneClickEnabled { await reload(reselectMostRecent: false) }
+    }
+
+    /// Called from the view on appearance, so the ceiling is being resolved while the payer is still
+    /// reading the form rather than after they have typed a BIN.
+    func loadAccountNetworksIfNeeded() async {
+        guard !accountQueryStarted else { return }
+        accountQueryStarted = true
+        await loadAccountNetworks()
+    }
+
+    /// Applies a vault verdict against the current allowed set — the ONE place that decides between
+    /// "offer these networks" and the contractual not-authorized error, so the vault path and the
+    /// ceiling path can never drift.
+    private func applyVaultVerdict(_ digits: String, _ resolved: [HiPayCardNetwork]) {
+        setNetworks(resolved)
+        // Nothing left offered → the contractual "not authorized" error (`networkError`).
+        unauthorizedDigits = networks.isEmpty ? digits : nil
+    }
+
+    /// The ceiling can land after the payer has already typed: re-derive the offered set and the
+    /// not-authorized verdict for the number currently in the field, reusing the vault verdict
+    /// already obtained FOR THAT NUMBER — never a second network call, and never local detection,
+    /// which must not raise the error on its own.
+    private func reapplyCeiling() {
+        let digits = panDigits
+        if vaultDigits == digits, !vaultNetworks.isEmpty {
+            applyVaultVerdict(digits, vaultNetworks)
+        } else {
+            let local = HiPayCardNetwork(CardNetworks.shared.detect(number: digits))
+            setNetworks(accountCeilingPending ? [] : (local.map { [$0] } ?? []))
         }
     }
 
@@ -366,7 +505,7 @@ public final class HiPayCardEntryController: ObservableObject {
         // reimplemented here); empty allowed → all resolved. Only offered
         // networks are shown/selectable as chips.
         let offered = AllowedNetworks.shared
-            .offered(resolved: resolved.map { $0.kmpNetwork }, allowed: allowedKmp)
+            .offered(resolved: resolved.map { $0.kmpNetwork }, allowed: effectiveAllowedKmp)
             .compactMap { HiPayCardNetwork($0) }
         networks = offered
         // Keep an EXPLICIT user choice if still offered; otherwise default to
@@ -492,13 +631,15 @@ public final class HiPayCardEntryController: ObservableObject {
 
     // MARK: - Allowed networks (story 5.7 / D13)
 
-    /// Whether the entered card's network is accepted by the merchant. Empty
-    /// allowed list → always true; an unresolved/UNKNOWN card → true (not
-    /// flagged). False only when the card resolved to network(s) and NONE are
-    /// in the allowed list (i.e. the offered set — computed by the commonMain
-    /// `AllowedNetworks` in `setNetworks` — is empty).
+    /// Whether the entered card's network is accepted. No restriction at all (`nil` effective
+    /// allowed set) → always true; an unresolved/UNKNOWN card → true (not flagged). False only when
+    /// the card resolved to network(s) and NONE survive the restriction (i.e. the offered set —
+    /// computed by the commonMain `AllowedNetworks` in `setNetworks` — is empty).
+    ///
+    /// Reads the EFFECTIVE set, not `allowedNetworks`: with the account ceiling in play, an empty
+    /// integrator list no longer means "everything is accepted".
     var isNetworkAuthorized: Bool {
-        allowedNetworks.isEmpty || resolvedNetworks.isEmpty || !networks.isEmpty
+        effectiveAllowedKmp == nil || resolvedNetworks.isEmpty || !networks.isEmpty
     }
 
     /// "Network not authorized" inline message — backend-verdict-gated
@@ -537,7 +678,7 @@ public final class HiPayCardEntryController: ObservableObject {
     var localNetworkError: String? {
         guard networks.isEmpty,
               AllowedNetworks.shared.isLocallyUnauthorized(
-                  detected: CardNetworks.shared.detect(number: panDigits), allowed: allowedKmp
+                  detected: CardNetworks.shared.detect(number: panDigits), allowed: effectiveAllowedKmp
               ) else { return nil }
         return message(for: ValidationReason.networkNotAuthorized)
     }
@@ -636,7 +777,11 @@ public final class HiPayCardEntryController: ObservableObject {
         isProcessing = true
         defer { isProcessing = false }
         // Capture the chosen network BEFORE tokenize() clears the component state.
-        let paymentProduct = selectedNetwork?.paymentProductCode ?? "visa"
+        // Falls back to the LOCALLY DETECTED network, never to a hardcoded brand: while the account
+        // ceiling is still pending there is no selected network, and a blind "visa" would declare the
+        // wrong instrument for any other card.
+        let paymentProduct = (selectedNetwork ?? HiPayCardNetwork(CardNetworks.shared.detect(number: panDigits)))?
+            .paymentProductCode ?? "visa"
         let token = try await tokenize(multiUse: effectiveSave)
         let payment = HiPayPayment(configuration: configuration)
         let tx = try await payment.requestCardOrder(

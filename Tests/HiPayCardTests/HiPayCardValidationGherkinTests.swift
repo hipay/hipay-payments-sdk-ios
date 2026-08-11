@@ -17,7 +17,7 @@ final class HiPayCardValidationGherkinTests: XCTestCase {
 
     @MainActor
     private func makeController(allowed: [HiPayCardNetwork] = []) -> HiPayCardEntryController {
-        HiPayCardEntryController(configuration: configuration, allowedNetworks: allowed)
+        HiPayCardEntryController(configuration: configuration, allowedNetworks: allowed).withOfflineCeiling()
     }
 
     @MainActor
