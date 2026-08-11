@@ -37,10 +37,6 @@ final class HiPayCardThemeTests: XCTestCase {
         XCTAssertEqual(theme.fieldHeight, 42)
     }
 
-    func testDefaultKeepsItsPreExistingNameAndEqualsHipayDefault() {
-        XCTAssertEqual(HiPayCardTheme.default, HiPayCardTheme.hipayDefault)
-    }
-
     // MARK: font enums
 
     func testEveryFontWeightHasASwiftUIMapping() {

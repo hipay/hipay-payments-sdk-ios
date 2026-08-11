@@ -55,7 +55,7 @@ final class HiPayOneClickTests: XCTestCase {
     @MainActor
     func test_refresh_loadsAndPreselectsThePersistedCard() async {
         XCTAssertTrue(makeStore().save(card: seededCard(), consentGiven: true))
-        let controller = HiPayCardEntryController(configuration: configuration, oneClickEnabled: true)
+        let controller = HiPayCardEntryController(configuration: configuration, oneClickEnabled: true).withOfflineCeiling()
         await controller.refreshSavedCards()
         XCTAssertEqual(1, controller.savedCards.count)
         XCTAssertEqual("411111xxxxxx1111", controller.savedCards.first?.maskedPan)
