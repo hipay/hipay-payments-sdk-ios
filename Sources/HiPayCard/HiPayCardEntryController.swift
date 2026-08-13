@@ -83,8 +83,9 @@ public final class HiPayCardEntryController: ObservableObject {
     /// routes to that stored token (no CVV) — call ``selectNewCard()`` first to force card entry.
     public let oneClickEnabled: Bool
 
-    /// How many saved cards the one-click UI shows before a "Show more" control (story 12-9).
-    /// Clamped to 1...10 (default 3); bounds only the DISPLAY — every saved card is still persisted.
+    /// How many saved cards the one-click UI shows before a "Show more" control.
+    /// Clamped to the shared Kotlin bounds (default 3, range 1...10); bounds only the DISPLAY —
+    /// every saved card is still persisted.
     public let savedCardsDisplayCount: Int
 
     /// The saved cards offered for one-click, most recently used/saved first (expired cards
@@ -283,14 +284,20 @@ public final class HiPayCardEntryController: ObservableObject {
         configuration: HiPayConfiguration,
         allowedNetworks: [HiPayCardNetwork] = [],
         oneClickEnabled: Bool = false,
-        savedCardsDisplayCount: Int = 3,
+        savedCardsDisplayCount: Int = Int(SavedCardsDisplayCountKt.DEFAULT_SAVED_CARDS_DISPLAY_COUNT),
         currency: String = "EUR"
     ) {
         self.configuration = configuration
         self.allowedNetworks = allowedNetworks
         self.oneClickEnabled = oneClickEnabled
-        // Mirrors the shared Kotlin contract (SavedCardsDisplayCount.kt): default 3, clamp 1...10.
-        self.savedCardsDisplayCount = max(1, min(10, savedCardsDisplayCount))
+        // Clamped by the shared Kotlin contract itself (SavedCardsDisplayCount.kt) rather than by
+        // re-stated literals, so the bounds cannot drift between the platforms. `clamping:` keeps a
+        // caller-supplied value outside Int32 from trapping on the way in.
+        self.savedCardsDisplayCount = Int(
+            SavedCardsDisplayCountKt.coerceSavedCardsDisplayCount(
+                count: Int32(clamping: savedCardsDisplayCount)
+            )
+        )
         self.accountCurrency = currency
         // Re-render the card when the shared HiPaySettings language changes at runtime (no re-init).
         // The shared settings is the KMP type; bridge its change listener to a SwiftUI republish.
