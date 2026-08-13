@@ -253,6 +253,13 @@ public struct HiPayCardEntryView: View {
         // Simple platform-standard expand/collapse when the selection changes — dropped to instant
         // under the reduce-motion accessibility setting (WCAG 2.3.3).
         .animation(reduceMotion ? nil : .default, value: controller.selectedSavedCard)
+        // A payment starting snaps any revealed swipe shut. Delete is already unreachable mid-payment
+        // (guards on the button, the drag, the long-press and the a11y action), but a red trash left
+        // sitting open reads as available for the whole flow, 3DS round-trip included. Mirrors the
+        // Android/CMP behaviour, where the reveal collapses on the same transition.
+        .onChange(of: controller.isProcessing) { processing in
+            if processing { swipeRevealedCard = nil }
+        }
         .onChange(of: controller.selectedSavedCard) { newSelection in
             // A (re)selection snaps any revealed swipe shut so no orphaned trash lingers.
             swipeRevealedCard = nil
@@ -349,9 +356,10 @@ public struct HiPayCardEntryView: View {
             let selectionBeyondFold = selectedIndex >= displayCount
             // Expansion is DERIVED, never latched: `savedCardsExpanded` holds the payer's own choice
             // and nothing else, so the forced expansion releases by itself once the selection returns
-            // within the fold, and a stale choice cannot survive the list shrinking back to (or below)
-            // the display count.
-            let expanded = (savedCardsExpanded && hasMore) || selectionBeyondFold
+            // within the fold. The choice is also dropped outright once the list no longer overflows
+            // (see .onChange below), otherwise deleting a card down to the fold and saving a new one
+            // later would silently reopen the list unasked.
+            let expanded = savedCardsExpanded || selectionBeyondFold
             let visibleCards = expanded ? cards : Array(cards.prefix(displayCount))
             VStack(alignment: .leading, spacing: 12) {
                 sectionHeader(loc(.labelSavedCards))
@@ -371,6 +379,9 @@ public struct HiPayCardEntryView: View {
                     showMoreToggle(expanded: expanded, canCollapse: !selectionBeyondFold)
                 }
                 newCardHeader
+            }
+            .onChange(of: hasMore) { stillOverflows in
+                if !stillOverflows { savedCardsExpanded = false }
             }
         }
     }
@@ -437,8 +448,9 @@ public struct HiPayCardEntryView: View {
         .accessibilityLabel(a11yLabel)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
         .accessibilityIdentifier("hipay.card.savedcard.\(index)")
-        // Long-press requests delete (no visible button, PM decision); the mandatory a11y custom
-        // action makes deletion reachable to VoiceOver (the long-press gesture is invisible to it).
+        // Tap selects; long-press requests delete (kept as the quick path alongside the swipe). The
+        // mandatory a11y custom action makes deletion reachable to VoiceOver (both gestures are
+        // invisible to it).
         // Both are gated on isProcessing explicitly — a custom a11y action is not reliably
         // suppressed by the ancestor .disabled, so delete must not be reachable mid-payment.
         .onLongPressGesture { if !controller.isProcessing { cardPendingDelete = card } }
