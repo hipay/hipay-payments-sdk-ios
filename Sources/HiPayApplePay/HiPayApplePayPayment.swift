@@ -16,6 +16,20 @@ import Foundation
 import HiPayCore
 @_implementationOnly import HiPayFullservice
 
+// MARK: - Networks
+
+/// The card networks HiPay can route through Apple Pay.
+///
+/// Deliberately narrower than the card component's network list: Amex and Bancontact are not routable via
+/// Apple Pay at HiPay, so this type cannot express a restriction that could never match. A restriction can
+/// only ever narrow what the account already accepts — it never widens it.
+public enum HiPayApplePayNetwork: String, Sendable, CaseIterable {
+    case visa
+    case mastercard
+    case maestro
+    case cb
+}
+
 // MARK: - Configuration
 
 /// The Apple Pay parameters supplied by the merchant, alongside the card ``HiPayConfiguration``.
@@ -44,17 +58,37 @@ public struct HiPayApplePayConfiguration: Sendable {
     /// the order route through it; otherwise the classic account is used. Blank counts as absent.
     public var applePayUsername: String?
 
+    /// An optional restriction on the networks offered in the sheet. Empty accepts every network the
+    /// account routes; it can only narrow that set, never widen it. Applied to both the availability
+    /// check and the sheet, so the button and the sheet always agree.
+    public var allowedNetworks: [HiPayApplePayNetwork]
+
     public init(
         merchantIdentifier: String,
         privateKeyPassword: String,
         merchantDisplayName: String,
-        applePayUsername: String? = nil
+        applePayUsername: String? = nil,
+        allowedNetworks: [HiPayApplePayNetwork] = []
     ) {
         self.merchantIdentifier = merchantIdentifier
         self.privateKeyPassword = privateKeyPassword
         self.merchantDisplayName = merchantDisplayName
         self.applePayUsername = applePayUsername
+        self.allowedNetworks = allowedNetworks
     }
+}
+
+extension HiPayApplePayConfiguration: CustomStringConvertible, CustomDebugStringConvertible {
+    /// Redacted on purpose. `print`, `dump` and most crash reporters use reflection, which would emit the
+    /// merchant `.p12` password verbatim — the one thing the property's own documentation forbids.
+    public var description: String {
+        "HiPayApplePayConfiguration(merchantIdentifier: \(merchantIdentifier), "
+            + "merchantDisplayName: \(merchantDisplayName), privateKeyPassword: <redacted>, "
+            + "applePayUsername: \(applePayUsername ?? "nil"), "
+            + "allowedNetworks: \(allowedNetworks.map(\.rawValue)))"
+    }
+
+    public var debugDescription: String { description }
 }
 
 // MARK: - Order
@@ -95,6 +129,16 @@ public struct HiPayApplePayOrder: Sendable {
     }
 }
 
+// The existing `description` field already satisfies CustomStringConvertible, so declaring the
+// conformance stops `print` from falling back to reflection — which would emit the signature.
+extension HiPayApplePayOrder: CustomStringConvertible, CustomDebugStringConvertible {
+    /// Redacted: the signature is derived from the merchant passphrase and must not reach a log.
+    public var debugDescription: String {
+        "HiPayApplePayOrder(orderId: \(orderId), amount: \(amount) \(currency), "
+            + "countryCode: \(countryCode), signature: \(signature == nil ? "nil" : "<redacted>"))"
+    }
+}
+
 // MARK: - Outcome
 
 /// Every outcome the wallet and the gateway can produce.
@@ -113,6 +157,9 @@ public enum HiPayApplePayOutcome: Sendable {
     case notCompleted(HiPayTransaction)
     /// The payer dismissed the sheet. Not an error.
     case cancelled
+    /// The SDK returned an outcome this version of the facade does not model. Never treat it as success
+    /// or as a cancellation: reconcile on the order id.
+    case unknown(String)
 }
 
 /// Why Apple Pay is or is not offerable — the answer to "why is the button not showing?".
@@ -150,10 +197,15 @@ public enum HiPayApplePayPayment {
     public static func isAvailable(
         configuration: HiPayConfiguration,
         currency: String,
-        customerCountry: String? = nil
+        customerCountry: String? = nil,
+        applePay: HiPayApplePayConfiguration? = nil
     ) async throws -> Bool {
-        try await availability(configuration: configuration, currency: currency, customerCountry: customerCountry)
-            .isAvailable
+        try await availability(
+            configuration: configuration,
+            currency: currency,
+            customerCountry: customerCountry,
+            applePay: applePay
+        ).isAvailable
     }
 
     /// The same check, with the reason — use this when the host needs to explain why Apple Pay is not
@@ -165,9 +217,10 @@ public enum HiPayApplePayPayment {
     public static func availability(
         configuration: HiPayConfiguration,
         currency: String,
-        customerCountry: String? = nil
+        customerCountry: String? = nil,
+        applePay: HiPayApplePayConfiguration? = nil
     ) async throws -> HiPayApplePayAvailability {
-        let result = try await eligibility(configuration, currency, customerCountry)
+        let result = try await eligibility(configuration, currency, customerCountry, applePay)
         let reason: HiPayApplePayAvailabilityReason
         switch result.reason {
         case .available: reason = .available
@@ -191,14 +244,21 @@ public enum HiPayApplePayPayment {
     public static func pay(
         configuration: HiPayConfiguration,
         applePay: HiPayApplePayConfiguration,
-        order: HiPayApplePayOrder
+        order: HiPayApplePayOrder,
+        customerCountry: String? = nil
     ) async throws -> HiPayApplePayOutcome {
+        // Resolved outside the do/catch: it already throws a mapped HiPayError, and re-wrapping it
+        // through HiPayError.from would erase the case (a Swift enum carries no KotlinException).
+        let resolved = try await eligibility(configuration, order.currency, customerCountry, applePay)
         do {
-            let resolved = try await eligibility(configuration, order.currency, nil)
             let result = try await ApplePayPresenter_iosKt.runApplePayPayment(
                 config: configuration.kmpConfig,
                 applePayConfig: applePay.kmp,
-                resolvedNetworks: resolved.resolvedNetworks,
+                // An unavailable result must not open a sheet. Passing an empty set makes the shared
+                // implementation raise its own validation error, so the message is the SDK's and both
+                // channels fail identically — rather than PassKit failing to present, which surfaces as
+                // an indistinguishable transport-looking error.
+                resolvedNetworks: resolved.state == .available ? resolved.resolvedNetworks : [],
                 order: order.kmp
             )
             return HiPayApplePayOutcome(result)
@@ -210,7 +270,8 @@ public enum HiPayApplePayPayment {
     private static func eligibility(
         _ configuration: HiPayConfiguration,
         _ currency: String,
-        _ customerCountry: String?
+        _ customerCountry: String?,
+        _ applePay: HiPayApplePayConfiguration?
     ) async throws -> ApplePayEligibilityResult {
         do {
             return try await ApplePayEligibilityKt.resolveApplePayEligibility(
@@ -218,7 +279,7 @@ public enum HiPayApplePayPayment {
                 device: ApplePayDeviceCapability_iosKt.defaultApplePayDeviceCapability(),
                 currency: currency,
                 customerCountry: customerCountry,
-                allowedNetworks: []
+                allowedNetworks: (applePay?.allowedNetworks ?? []).map { $0.kmp }
             )
         } catch {
             throw HiPayError.from(error)
@@ -235,8 +296,19 @@ private extension HiPayApplePayConfiguration {
             privateKeyPassword: privateKeyPassword,
             merchantDisplayName: merchantDisplayName,
             applePayUsername: applePayUsername,
-            allowedNetworks: []
+            allowedNetworks: allowedNetworks.map { $0.kmp }
         )
+    }
+}
+
+private extension HiPayApplePayNetwork {
+    var kmp: CardNetwork {
+        switch self {
+        case .visa: return .visa
+        case .mastercard: return .mastercard
+        case .maestro: return .maestro
+        case .cb: return .cb
+        }
     }
 }
 
@@ -268,9 +340,12 @@ private extension HiPayApplePayOutcome {
             self = .pending(HiPayTransaction(pending.transaction))
         case let notCompleted as ApplePayPaymentResult.NotCompleted:
             self = .notCompleted(HiPayTransaction(notCompleted.transaction))
-        default:
-            // ApplePayPaymentResult.Cancelled is an object, so identity is the only case left.
+        case is ApplePayPaymentResult.Cancelled:
             self = .cancelled
+        default:
+            // Explicit rather than folded into `.cancelled`: a future outcome reported as "the payer
+            // walked away" is the one default where a host neither fulfils nor reconciles.
+            self = .unknown(String(describing: kmp))
         }
     }
 }
