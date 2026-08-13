@@ -21,7 +21,7 @@ public struct HiPayTransaction: Sendable {
     public let reason: String?
     public let threeDSecureAuthenticationStatus: String?
 
-    init(_ kmp: Transaction) {
+    package init(_ kmp: Transaction) {
         switch kmp.state {
         case .completed: state = .completed
         case .forwarding: state = .forwarding
