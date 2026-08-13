@@ -35,6 +35,7 @@
 "A11Y_COLLAPSED" = "collapsed";
 "LABEL_SHOW_MORE" = "Show more";
 "LABEL_SHOW_LESS" = "Show less";
+"A11Y_SHOW_LESS_BLOCKED" = "Unavailable while the selected card is further down the list";
 /* PROVISIONAL delete copy — NOT yet legally/UX approved; finalized in a later release. */
 "LABEL_DELETE_CARD" = "Delete card";
 "CONFIRM_DELETE_CARD" = "Remove this saved card? You can save it again next time you pay.";
