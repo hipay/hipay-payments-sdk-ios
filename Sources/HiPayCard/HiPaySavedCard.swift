@@ -27,7 +27,16 @@ public struct HiPaySavedCard: Identifiable, Equatable {
     /// Stable identity for lists — the store's own card identity (masked pan + expiry).
     public var id: String { "\(maskedPan)|\(expiryMonth)|\(expiryYear)" }
 
+    /// Value equality on every exposed field, matching Kotlin `SavedCard.equals` field for field.
+    /// `id` alone would ignore `network` and `holder`, which the store updates in place on a re-save —
+    /// the two platforms would then disagree on whether a refreshed list still contains the selected
+    /// card.
     public static func == (lhs: HiPaySavedCard, rhs: HiPaySavedCard) -> Bool {
-        lhs.kmp.token == rhs.kmp.token && lhs.id == rhs.id
+        lhs.kmp.token == rhs.kmp.token
+            && lhs.maskedPan == rhs.maskedPan
+            && lhs.network == rhs.network
+            && lhs.holder == rhs.holder
+            && lhs.expiryMonth == rhs.expiryMonth
+            && lhs.expiryYear == rhs.expiryYear
     }
 }
