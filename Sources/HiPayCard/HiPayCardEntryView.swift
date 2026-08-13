@@ -20,6 +20,10 @@ import HiPayFullservice
 /// politely without stealing focus. The component sets the RELATIVE traversal
 /// order of its own fields (D12) unless `setsAccessibilityOrder` is false.
 ///
+/// Scrolling is the HOST's job: this is a plain `VStack` and never scrolls itself. With one-click
+/// enabled the payer can reveal every stored card at once ("Show more"), so place it inside a
+/// `ScrollView` or the controls below the list can end up unreachable.
+///
 /// Styling: appearance comes from `theme` — build it from the shared cross-platform
 /// `HiPayCardEntryStyle` (`HiPayCardTheme(style:)`) or customize `HiPayCardTheme.hipayDefault`
 /// per property. Colors/typography/metrics only — behaviours (formatting, focus, one-click,
@@ -343,7 +347,11 @@ public struct HiPayCardEntryView: View {
             let hasMore = cards.count > displayCount
             let selectedIndex = controller.selectedSavedCard.flatMap { cards.firstIndex(of: $0) } ?? -1
             let selectionBeyondFold = selectedIndex >= displayCount
-            let expanded = savedCardsExpanded || selectionBeyondFold
+            // Expansion is DERIVED, never latched: `savedCardsExpanded` holds the payer's own choice
+            // and nothing else, so the forced expansion releases by itself once the selection returns
+            // within the fold, and a stale choice cannot survive the list shrinking back to (or below)
+            // the display count.
+            let expanded = (savedCardsExpanded && hasMore) || selectionBeyondFold
             let visibleCards = expanded ? cards : Array(cards.prefix(displayCount))
             VStack(alignment: .leading, spacing: 12) {
                 sectionHeader(loc(.labelSavedCards))
@@ -511,7 +519,8 @@ public struct HiPayCardEntryView: View {
     /// the display count. A centered button whose expanded/collapsed value carries the meaning for
     /// VoiceOver (the chevron is decorative); it stays present across toggles so VoiceOver focus is
     /// retained. When [canCollapse] is false while expanded, "Show less" is disabled (the selection
-    /// sits beyond the fold — collapsing would hide the paying card).
+    /// sits beyond the fold — collapsing would hide the paying card) and an accessibility hint carries
+    /// the reason, so a VoiceOver user is not left with an unexplained dimmed control.
     private func showMoreToggle(expanded: Bool, canCollapse: Bool) -> some View {
         Button {
             withAnimation(reduceMotion ? nil : .default) {
@@ -538,6 +547,7 @@ public struct HiPayCardEntryView: View {
         .disabled(expanded && !canCollapse) // "Show less" inert while the selection sits beyond the fold
         .accessibilityAddTraits(.isButton)
         .accessibilityValue(expanded ? loc(.a11yExpanded) : loc(.a11yCollapsed))
+        .accessibilityHint(expanded && !canCollapse ? loc(.a11yShowLessBlocked) : "")
         .accessibilityIdentifier("hipay.card.savedcards.showmore")
     }
 
