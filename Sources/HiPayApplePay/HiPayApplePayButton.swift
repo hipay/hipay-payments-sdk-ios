@@ -71,9 +71,17 @@ public enum HiPayApplePayButtonType: CaseIterable {
 }
 
 /// A positionable Apple Pay button. Place it anywhere in your view hierarchy; provide a PassKit
-/// `style` + `type`, and an `onTap` to start the payment. When `isAvailable` is false (default:
-/// `PKPaymentAuthorizationController.canMakePayments()`), the button renders nothing — full
-/// routable-network eligibility is wired in a later story.
+/// `style` + `type`, an `onTap` to start the payment, and the `isAvailable` verdict. The button
+/// renders nothing while `isAvailable` is false.
+///
+/// `isAvailable` is REQUIRED, deliberately. Resolve it with
+/// ``HiPayApplePayPayment/availability(configuration:currency:allowedNetworks:)`` and start from
+/// `false`: three conditions must all hold — the device can pay, your HiPay account is contracted
+/// for a network Apple Pay can route, and your optional restriction leaves at least one of them.
+/// `PKPaymentAuthorizationController.canMakePayments()` answers only the first and is `true` on any
+/// Apple-Pay-capable device *even with no card provisioned*, so defaulting to it would show a button
+/// that cannot complete a payment — a failure invisible outside a real device. Requiring the
+/// parameter turns that mistake into a compile error instead.
 ///
 /// The button cannot be restyled beyond PassKit's options (Apple rule). For a UIKit host, embed
 /// this via `UIHostingController`.
@@ -86,13 +94,12 @@ public struct HiPayApplePayButton: View {
     public init(
         style: HiPayApplePayButtonStyle = .automatic,
         type: HiPayApplePayButtonType = .buy,
-        isAvailable: Bool? = nil,
+        isAvailable: Bool,
         onTap: @escaping () -> Void
     ) {
         self.style = style
         self.type = type
         self.isAvailable = isAvailable
-            ?? PKPaymentAuthorizationController.canMakePayments()
         self.onTap = onTap
     }
 
