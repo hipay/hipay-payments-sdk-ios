@@ -1,0 +1,32 @@
+# Review-only pipeline for the iOS SDK package.
+#
+# This project has no build or test pipeline: the Swift facade is compiled by the consuming demos
+# and by the KMP monorepo's release job, and its unit tests run from the TestHost Xcode project on
+# a developer machine. The single purpose of this file is the manual AI merge-request review.
+#
+# The `workflow:` guard below is NOT optional. This repository had no CI at all, so adding one makes
+# GitLab attempt to create a pipeline on every push; with `ai-review` as the only job — itself gated
+# on `feature/*` and `hotfix/*` — a push to `develop` or `main` would fail with "pipeline has no
+# jobs". Restricting pipeline creation to the branches that actually carry a job avoids polluting
+# the repository with failed pipeline creations forever.
+#
+# Why this project needs its own review MR: in the KMP monorepo this package is a git submodule, and
+# a merge-request diff renders a submodule as a single pointer line. The Swift changes are therefore
+# invisible from a monorepo MR and can only be reviewed here.
+
+include:
+  - component: $CI_SERVER_FQDN/common/ci-components/ai-review-component/ai-review@2.3.0
+    inputs:
+      gitlab_private_token: $AI_REVIEW_GITLAB_TOKEN
+      # Optional. Narrow the agent onto this package's own rules rather than letting it infer them:
+      # custom_context: "Hand-written 100%-Swift facade over a binary KMP XCFramework. PCI: never log
+      #   card data, never expose the PAN or a stored token. Public API changes are breaking for
+      #   integrators consuming HiPayCore/HiPayCard via SPM."
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_REF_NAME =~ /^(feature|hotfix)\//
+    - when: never
+
+stages:
+  - review
