@@ -818,7 +818,7 @@ public final class HiPayCardEntryController: ObservableObject {
         if effectiveSave, final.state == .completed {
             // Fail-soft: the payment outcome is already decided; save() reports failure as a
             // boolean, never a thrown error. Record the outcome for the host (popup/confirmation).
-            if let newSavedCard = SavedCardPaymentKt.savedCardFromToken(token: token.kmp) {
+            if let newSavedCard = SavedCardPaymentKt.savedCardFromToken(token: token.kmp, paymentProduct: paymentProduct) {
                 let persisted = await savedCardStore.with { $0.save(card: newSavedCard, consentGiven: true) }
                 lastSaveOutcome = persisted ? .saved : .storageFailed
             } else {
