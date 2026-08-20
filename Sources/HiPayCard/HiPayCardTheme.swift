@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import HiPayPayments
 
 /// SwiftUI-native appearance of `HiPayCardEntryView`, built from the shared cross-platform
@@ -25,8 +26,11 @@ import HiPayPayments
 /// Kotlin `IllegalArgumentException` (Kotlin-initializer exceptions are not catchable from
 /// Swift) — prefer starting from a valid style and overriding on the theme.
 ///
-/// The default theme is light-mode (the cross-platform unified baseline): on a dark host
-/// background, pass a dark-adapted style/theme until dedicated dark-theme support ships.
+/// The DEFAULT theme follows the host's light/dark appearance on its own: its colours are the
+/// system's semantic ones, which resolve per trait collection, so an embedded payment form never
+/// paints an opaque white box on a dark screen. Any theme you build from a `HiPayCardEntryStyle`
+/// keeps the exact colours you gave it — once you set them, adapting per appearance is yours to do,
+/// because only you know what your surface looks like.
 public struct HiPayCardTheme: Equatable, Sendable {
     /// Entered-text color (and the caret).
     public var textColor: Color
@@ -68,9 +72,21 @@ public struct HiPayCardTheme: Equatable, Sendable {
         didSet { Self.requireFinite(fieldHeight, "fieldHeight", atLeast: .leastNormalMagnitude) }
     }
 
-    /// The SDK's default look — the SwiftUI projection of the shared contract's
-    /// `HiPayCardEntryStyle.hipayDefault` (identical baseline across platforms).
-    public static let hipayDefault = HiPayCardTheme()
+    /// The SDK's default look. Unlike a theme built from an explicit `HiPayCardEntryStyle`, this one
+    /// uses the SYSTEM's semantic colours, so it tracks light/dark without the integrator wiring
+    /// anything — the cross-platform baseline is "follow the host", not a fixed light palette. The
+    /// non-colour metrics still come from the shared contract, so the geometry stays identical across
+    /// platforms.
+    public static let hipayDefault: HiPayCardTheme = {
+        var theme = HiPayCardTheme()
+        theme.textColor = Color(uiColor: .label)
+        theme.placeholderColor = Color(uiColor: .secondaryLabel)
+        theme.iconColor = Color(uiColor: .secondaryLabel)
+        theme.invalidTextColor = Color(uiColor: .systemRed)
+        theme.borderColor = Color(uiColor: .separator)
+        theme.backgroundColor = Color(uiColor: .secondarySystemBackground)
+        return theme
+    }()
 
     /// Maps the shared platform-neutral contract to SwiftUI types.
     public init(style: HiPayCardEntryStyle = HiPayCardEntryStyle.companion.hipayDefault) {
