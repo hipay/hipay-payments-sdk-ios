@@ -49,6 +49,12 @@ public struct HiPayCardEntryView: View {
     @State private var cardPendingDelete: HiPaySavedCard?
     // The saved card whose left-swipe trash action is currently revealed (one at a time).
     @State private var swipeRevealedCard: HiPaySavedCard?
+    // Live drag: the row being dragged right now and how far it has followed the finger. One finger,
+    // so one offset — settled rows read their position from `swipeRevealedCard` instead.
+    @State private var swipeDraggingCard: HiPaySavedCard?
+    @State private var swipeDragOffset: CGFloat = 0
+    /// How far a row slides to expose the trash, and (at half of it) the point a drag settles open.
+    private static let swipeRevealWidth: CGFloat = 56
     // When the user asks for less motion (WCAG 2.3.3) transitions are dropped to instant.
     // Qualified: HiPayPayments also exports an `Environment` type, so the bare attribute is
     // ambiguous here.
@@ -62,6 +68,23 @@ public struct HiPayCardEntryView: View {
         self.controller = controller
         self.theme = theme
         self.setsAccessibilityOrder = setsAccessibilityOrder
+    }
+
+    /// Single decision point for every delete request. The confirmation is opt-in
+    /// (``HiPayCardEntryController/confirmCardDeletion``) for the gesture paths, which already take
+    /// two deliberate steps, but ALWAYS shown for a VoiceOver request: the custom "Delete" action is
+    /// a single step with no trash to aim at, so skipping it there would delete with no safety net.
+    private func requestDelete(_ card: HiPaySavedCard, viaAccessibility: Bool) {
+        guard !controller.isProcessing else { return }
+        if controller.confirmCardDeletion || viaAccessibility {
+            cardPendingDelete = card
+        } else {
+            Task { await controller.deleteSavedCard(card) }
+        }
+    }
+
+    private func longPressHaptic() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
 
     private func loc(_ key: CardEntryStringKey) -> String {
@@ -401,7 +424,7 @@ public struct HiPayCardEntryView: View {
         // The error is part of the merged cell label: focusing the cell reads why it failed.
         let a11yLabel = error.map { "\(baseA11yLabel), \(loc($0.messageKey))" } ?? baseA11yLabel
         let selected = controller.selectedSavedCard == card
-        let cell = Button { controller.selectSavedCard(card) } label: {
+        let cell = VStack {
             HStack(spacing: 10) {
                 Image(platformNetwork?.assetName ?? HiPayCardNetwork.neutralAssetName, bundle: .module)
                     .resizable()
@@ -444,28 +467,54 @@ public struct HiPayCardEntryView: View {
                     )
             )
         }
-        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        // Selection is a TAP GESTURE and not a Button, deliberately. A Button activates on touch-up
+        // even after the finger has travelled, so a left-swipe used to select the card on its way to
+        // revealing the trash — changing the charged card unasked. A tap gesture needs a still
+        // finger, which is what lets the swipe below run as a *simultaneous* gesture instead of a
+        // high-priority one. That matters twice over: a high-priority drag swallowed the host's
+        // vertical scroll, and it suppressed this long press until the drag failed at touch-up, so
+        // the long press appeared not to work at all.
+        .onTapGesture { if !controller.isProcessing { controller.selectSavedCard(card) } }
+        // Long-press requests delete, with the platform's long-press haptic at DETECTION (iOS plays
+        // none by itself outside a context menu), so the payer feels the gesture change meaning
+        // while still holding — not on release.
+        // Long-press REVEALS the trash, exactly like a left-swipe — it never deletes. Both gestures
+        // land on the same state; the payer then either taps the trash (that tap IS the validation)
+        // or swipes back the other way to cancel.
+        .onLongPressGesture {
+            guard !controller.isProcessing else { return }
+            longPressHaptic()
+            withAnimation(reduceMotion ? nil : .default) { swipeRevealedCard = card }
+        }
+        // Restated because the Button used to provide them: without it the row would neither expose
+        // the button trait nor merge into a single element, and `app.buttons[…]` would find nothing.
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : [.isButton])
         .accessibilityLabel(a11yLabel)
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
         .accessibilityIdentifier("hipay.card.savedcard.\(index)")
-        // Tap selects; long-press requests delete (kept as the quick path alongside the swipe). The
-        // mandatory a11y custom action makes deletion reachable to VoiceOver (both gestures are
-        // invisible to it).
-        // Both are gated on isProcessing explicitly — a custom a11y action is not reliably
-        // suppressed by the ancestor .disabled, so delete must not be reachable mid-payment.
-        .onLongPressGesture { if !controller.isProcessing { cardPendingDelete = card } }
+        // VoiceOver activation needs an explicit default action now: a Button had one implicitly, a
+        // tap gesture does not reliably. Without this, double-tap would silently stop selecting the
+        // card — a regression no UI test would catch, since XCUITest taps rather than activates.
+        .accessibilityAction { if !controller.isProcessing { controller.selectSavedCard(card) } }
+        // Deletion for screen readers, which never see either gesture. Gated on isProcessing
+        // explicitly — a custom a11y action is not reliably suppressed by the ancestor .disabled.
         .accessibilityAction(named: Text(loc(.labelDeleteCard))) {
-            if !controller.isProcessing { cardPendingDelete = card }
+            requestDelete(card, viaAccessibility: true)
         }
         // Left-swipe reveals a trailing trash action; tapping it opens the delete confirmation. An
         // accidental swipe never deletes — only the trash tap (or the retained long-press / a11y
         // "Delete" action) requests it. Reverses the earlier no-visible-delete-button behaviour.
         let revealed = swipeRevealedCard == card
+        // The row follows the finger while dragging, then settles past the mid-travel point. Only one
+        // finger exists, so a single live offset plus the card it belongs to is enough state.
+        let dragging = swipeDraggingCard == card
+        let offset: CGFloat = dragging ? swipeDragOffset : (revealed ? -Self.swipeRevealWidth : 0)
         let row = ZStack(alignment: .trailing) {
-            if revealed {
+            if offset < -1 {
                 Button {
                     swipeRevealedCard = nil
-                    if !controller.isProcessing { cardPendingDelete = card }
+                    requestDelete(card, viaAccessibility: false)
                 } label: {
                     Image(systemName: "trash")
                         .foregroundColor(.red)
@@ -477,22 +526,26 @@ public struct HiPayCardEntryView: View {
                 .accessibilityIdentifier("hipay.card.savedcard.\(index).delete")
             }
             cell
-                .offset(x: revealed ? -56 : 0)
-                // A horizontal drag reveals/hides the trash. High-priority so a recognized swipe wins
-                // over the cell button — a swipe must NOT also select the card (which would change the
-                // charged card and, via .onChange, snap the just-revealed trash shut). Below
-                // minimumDistance the drag never starts, so a plain tap still selects (and long-press
-                // still requests delete).
-                .highPriorityGesture(
+                .offset(x: offset)
+                // SIMULTANEOUS, not high-priority: the enclosing ScrollView must keep receiving
+                // vertical pans, and the tap/long-press above must keep recognising. Only a
+                // horizontal-dominant drag claims the row, so a vertical pan is left alone entirely.
+                .simultaneousGesture(
                     DragGesture(minimumDistance: 12)
-                        .onEnded { value in
+                        .onChanged { value in
                             guard !controller.isProcessing else { return }
+                            guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                            swipeDraggingCard = card
+                            let base: CGFloat = revealed ? -Self.swipeRevealWidth : 0
+                            swipeDragOffset = min(0, max(-Self.swipeRevealWidth, base + value.translation.width))
+                        }
+                        .onEnded { _ in
+                            let settleOpen = swipeDraggingCard == card
+                                && swipeDragOffset < -Self.swipeRevealWidth / 2
                             withAnimation(reduceMotion ? nil : .default) {
-                                if value.translation.width < -40 {
-                                    swipeRevealedCard = card
-                                } else if value.translation.width > 40 {
-                                    swipeRevealedCard = nil
-                                }
+                                if swipeDraggingCard == card { swipeRevealedCard = settleOpen ? card : nil }
+                                swipeDraggingCard = nil
+                                swipeDragOffset = 0
                             }
                         }
                 )

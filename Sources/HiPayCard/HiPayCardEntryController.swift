@@ -88,6 +88,13 @@ public final class HiPayCardEntryController: ObservableObject {
     /// every saved card is still persisted.
     public let savedCardsDisplayCount: Int
 
+    /// Ask the payer to confirm before a saved card is deleted. OFF by default: reaching the trash
+    /// already takes two deliberate steps (left-swipe or long-press, then tapping the trash), so a
+    /// dialog on top adds friction rather than intent. The confirmation is shown REGARDLESS of this
+    /// flag when the request comes from the VoiceOver "Delete" action, which is a single step with no
+    /// trash to aim at.
+    public let confirmCardDeletion: Bool
+
     /// The saved cards offered for one-click, most recently used/saved first (expired cards
     /// purged); empty when none or not loaded. Refreshed via ``refreshSavedCards()``.
     @Published public private(set) var savedCards: [HiPaySavedCard] = []
@@ -285,6 +292,7 @@ public final class HiPayCardEntryController: ObservableObject {
         allowedNetworks: [HiPayCardNetwork] = [],
         oneClickEnabled: Bool = false,
         savedCardsDisplayCount: Int = Int(SavedCardsDisplayCountKt.DEFAULT_SAVED_CARDS_DISPLAY_COUNT),
+        confirmCardDeletion: Bool = false,
         currency: String = "EUR"
     ) {
         self.configuration = configuration
@@ -293,6 +301,7 @@ public final class HiPayCardEntryController: ObservableObject {
         // Clamped by the shared Kotlin contract itself (SavedCardsDisplayCount.kt) rather than by
         // re-stated literals, so the bounds cannot drift between the platforms. `clamping:` keeps a
         // caller-supplied value outside Int32 from trapping on the way in.
+        self.confirmCardDeletion = confirmCardDeletion
         self.savedCardsDisplayCount = Int(
             SavedCardsDisplayCountKt.coerceSavedCardsDisplayCount(
                 count: Int32(clamping: savedCardsDisplayCount)
