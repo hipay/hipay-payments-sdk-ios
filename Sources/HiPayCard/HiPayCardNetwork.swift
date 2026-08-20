@@ -1,5 +1,5 @@
 import SwiftUI
-import HiPayFullservice
+import HiPayPayments
 
 /// A card network surfaced to the host for the brand-icon UX. Maps the KMP
 /// `CardNetwork` and carries its display asset + the order `payment_product`

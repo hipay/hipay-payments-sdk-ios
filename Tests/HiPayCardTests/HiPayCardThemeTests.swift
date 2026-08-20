@@ -1,5 +1,5 @@
 import SwiftUI
-import HiPayFullservice
+import HiPayPayments
 import XCTest
 @testable import HiPayCard
 

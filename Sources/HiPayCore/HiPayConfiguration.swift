@@ -1,4 +1,4 @@
-import HiPayFullservice
+import HiPayPayments
 
 /// Target HiPay platform.
 public enum HiPayEnvironment: Sendable {

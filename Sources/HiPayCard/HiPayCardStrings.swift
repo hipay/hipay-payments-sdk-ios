@@ -1,5 +1,5 @@
 import Foundation
-import HiPayFullservice
+import HiPayPayments
 
 /// Resolves the shared card-entry i18n keys (`CardEntryStringKey`, story 5.1) to
 /// localized text from the HiPayCard bundle catalogs (FR/EN/IT, story 5.2).

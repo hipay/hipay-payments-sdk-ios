@@ -1,4 +1,4 @@
-import HiPayFullservice
+import HiPayPayments
 
 /// Tokenization result — INTERNAL: the token is created and consumed inside the
 /// SDK by `HiPayCardEntryController.pay(...)` and never crosses to the host

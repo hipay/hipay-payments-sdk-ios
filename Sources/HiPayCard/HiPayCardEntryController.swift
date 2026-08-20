@@ -3,7 +3,7 @@ import AuthenticationServices
 import Combine
 import UIKit
 import HiPayCore
-import HiPayFullservice
+import HiPayPayments
 
 /// How the SDK presents the 3DS challenge when `pay(threeDS:)` hits a `FORWARDING` transaction
 /// (story 11.13). Both modes are turnkey — `pay()` returns the FINAL confirmed transaction; the

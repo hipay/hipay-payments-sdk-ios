@@ -1,6 +1,6 @@
 import Foundation
 import HiPayCore
-import HiPayFullservice
+import HiPayPayments
 import XCTest
 @testable import HiPayCard
 

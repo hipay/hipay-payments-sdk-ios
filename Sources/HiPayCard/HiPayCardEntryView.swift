@@ -1,6 +1,6 @@
 import SwiftUI
 import UIKit
-import HiPayFullservice
+import HiPayPayments
 
 /// Embeddable card-entry component (FR11b): the host drops this view into
 /// its own screen; card data never leaves it (the paired
@@ -50,7 +50,7 @@ public struct HiPayCardEntryView: View {
     // The saved card whose left-swipe trash action is currently revealed (one at a time).
     @State private var swipeRevealedCard: HiPaySavedCard?
     // When the user asks for less motion (WCAG 2.3.3) transitions are dropped to instant.
-    // Qualified: HiPayFullservice also exports an `Environment` type, so the bare attribute is
+    // Qualified: HiPayPayments also exports an `Environment` type, so the bare attribute is
     // ambiguous here.
     @SwiftUI.Environment(\.accessibilityReduceMotion) private var reduceMotion
 

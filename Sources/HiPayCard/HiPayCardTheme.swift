@@ -1,5 +1,5 @@
 import SwiftUI
-import HiPayFullservice
+import HiPayPayments
 
 /// SwiftUI-native appearance of `HiPayCardEntryView`, built from the shared cross-platform
 /// `HiPayCardEntryStyle` contract (the single source of truth for colors, typography and

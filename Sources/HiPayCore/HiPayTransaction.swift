@@ -1,5 +1,5 @@
 import Foundation
-import HiPayFullservice
+import HiPayPayments
 
 /// Typed transaction state (mirrors the KMP single source of truth).
 public enum HiPayTransactionState: Sendable {

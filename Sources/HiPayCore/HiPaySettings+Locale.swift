@@ -1,5 +1,5 @@
 import Foundation
-import HiPayFullservice
+import HiPayPayments
 
 /// Swift conveniences on the shared `HiPaySettings` (the KMP type used on every platform).
 public extension HiPaySettings {

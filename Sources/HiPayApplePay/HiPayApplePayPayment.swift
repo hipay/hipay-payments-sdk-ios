@@ -14,7 +14,7 @@
 
 import Foundation
 import HiPayCore
-@_implementationOnly import HiPayFullservice
+@_implementationOnly import HiPayPayments
 
 // MARK: - Networks
 

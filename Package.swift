@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "HiPayFullserviceKMP",
+    name: "HiPayPaymentsKMP",
     // Required for the HiPayCard localized .strings catalogs (story 5.2);
     // a device locale with no catalog falls back to EN.
     defaultLocalization: "en",
@@ -19,12 +19,12 @@ let package = Package(
     targets: [
         // KMP binary produced by scripts/build-xcframework.sh (git-ignored).
         .binaryTarget(
-            name: "HiPayFullservice",
-            path: "HiPayFullservice.xcframework"
+            name: "HiPayPayments",
+            path: "HiPayPayments.xcframework"
         ),
         .target(
             name: "HiPayCore",
-            dependencies: ["HiPayFullservice"]
+            dependencies: ["HiPayPayments"]
         ),
         .target(
             name: "HiPayCard",

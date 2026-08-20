@@ -1,5 +1,5 @@
 // PCI: com.hipay.card path — never log here, never expose the stored token.
-import HiPayFullservice
+import HiPayPayments
 
 /// A card the payer saved for one-click payment — the Swift face of the KMP
 /// `SavedCard`, keeping Kotlin types off the public surface. Exposes ONLY the
