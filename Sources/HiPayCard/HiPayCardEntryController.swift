@@ -761,7 +761,9 @@ public final class HiPayCardEntryController: ObservableObject {
         customer: HiPayCustomerInfo? = nil,
         shipping: HiPayCustomerInfo? = nil,
         threeDS: HiPayThreeDSMode = .inAppSession,
-        saveCard: Bool = false
+        saveCard: Bool = false,
+        /// Optional gateway parameters for this order — see ``HiPayOrderOptions``.
+        options: HiPayOrderOptions? = nil
     ) async throws -> HiPayTransaction {
         // One-click routing: with a saved card selected, the same host call pays via the
         // stored token — no tokenization, no CVV; the host's single touch-point is preserved.
@@ -784,7 +786,8 @@ public final class HiPayCardEntryController: ObservableObject {
                 customer: customer,
                 shipping: shipping,
                 threeDS: threeDS
-            )
+            ,
+                options: options)
         }
         // The component's save switch and the parameter express the same consent.
         let effectiveSave = saveCard || (oneClickEnabled && saveCardOptIn)
@@ -812,7 +815,8 @@ public final class HiPayCardEntryController: ObservableObject {
             authenticationIndicator: authenticationIndicator,
             signature: signature,
             customer: customer,
-            shipping: shipping
+            shipping: shipping,
+            options: options
         )
         let final = try await resolve3DS(tx, redirectScheme: redirectScheme, signature: signature, threeDS: threeDS)
         if effectiveSave, final.state == .completed {
@@ -850,7 +854,9 @@ public final class HiPayCardEntryController: ObservableObject {
         signature: String? = nil,
         customer: HiPayCustomerInfo? = nil,
         shipping: HiPayCustomerInfo? = nil,
-        threeDS: HiPayThreeDSMode = .inAppSession
+        threeDS: HiPayThreeDSMode = .inAppSession,
+        /// Optional gateway parameters for this order — see ``HiPayOrderOptions``.
+        options: HiPayOrderOptions? = nil
     ) async throws -> HiPayTransaction {
         lastOneClickError = nil // a fresh attempt supersedes the previous outcome
         // Sampled before the (possibly long) 3DS round-trip: the reason must reflect the
@@ -874,7 +880,8 @@ public final class HiPayCardEntryController: ObservableObject {
                 signature: signature,
                 customer: customer,
                 shipping: shipping,
-                oneClick: true
+                oneClick: true,
+                options: options
             )
         } catch let error as HiPayError {
             if case .cardNoLongerValid = error {

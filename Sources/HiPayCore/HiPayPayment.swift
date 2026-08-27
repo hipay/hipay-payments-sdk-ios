@@ -37,7 +37,9 @@ public final class HiPayPayment {
         signature: String? = nil,
         customer: HiPayCustomerInfo? = nil,
         shipping: HiPayCustomerInfo? = nil,
-        oneClick: Bool = false
+        oneClick: Bool = false,
+        /// Optional gateway parameters for this order — see ``HiPayOrderOptions``.
+        options: HiPayOrderOptions? = nil
     ) async throws -> HiPayTransaction {
         // Built from the shared Kotlin contract, never from a Swift copy of the host: the parser on
         // the return side reads the same constant, and a divergence would mean the browser comes back
@@ -66,6 +68,7 @@ public final class HiPayPayment {
             authenticationIndicator: Int32(authenticationIndicator),
             oneClick: oneClick
         )
+        if let options { _ = order.withOptions(options: try options.kmp) }
         do {
             return HiPayTransaction(try await gateway.requestNewOrder(order: order, signature: signature))
         } catch {
