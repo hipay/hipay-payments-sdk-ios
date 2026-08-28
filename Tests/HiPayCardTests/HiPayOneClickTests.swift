@@ -1,6 +1,6 @@
 import Foundation
 import HiPayCore
-import HiPayFullservice
+import HiPayPayments
 import XCTest
 @testable import HiPayCard
 
@@ -41,6 +41,24 @@ final class HiPayOneClickTests: XCTestCase {
         XCTAssertEqual("12", wrapped.expiryMonth)
         XCTAssertEqual("2031", wrapped.expiryYear)
         XCTAssertEqual("411111xxxxxx1111|12|2031", wrapped.id)
+    }
+
+    /// The display count is exposed clamped. Asserted against the SHARED Kotlin constants, not against
+    /// Swift literals: the point of the check is that iOS cannot drift from the single-sourced bounds,
+    /// and a test written with its own copies of 1/3/10 would keep passing after a divergence.
+    @MainActor
+    func test_savedCardsDisplayCount_defaultsToAndClampsToTheSharedKotlinBounds() {
+        let expectedDefault = Int(SavedCardsDisplayCountKt.DEFAULT_SAVED_CARDS_DISPLAY_COUNT)
+        let expectedMin = Int(SavedCardsDisplayCountKt.MIN_SAVED_CARDS_DISPLAY_COUNT)
+        let expectedMax = Int(SavedCardsDisplayCountKt.MAX_SAVED_CARDS_DISPLAY_COUNT)
+        XCTAssertEqual(expectedDefault, HiPayCardEntryController(configuration: configuration).savedCardsDisplayCount)
+        XCTAssertEqual(expectedMin, HiPayCardEntryController(configuration: configuration, savedCardsDisplayCount: expectedMin - 1).savedCardsDisplayCount)
+        XCTAssertEqual(expectedMax, HiPayCardEntryController(configuration: configuration, savedCardsDisplayCount: expectedMax + 1).savedCardsDisplayCount)
+        // An in-range value passes through untouched.
+        XCTAssertEqual(expectedDefault + 1, HiPayCardEntryController(configuration: configuration, savedCardsDisplayCount: expectedDefault + 1).savedCardsDisplayCount)
+        // A value that would trap a plain Int32 conversion still clamps instead of crashing.
+        XCTAssertEqual(expectedMax, HiPayCardEntryController(configuration: configuration, savedCardsDisplayCount: Int.max).savedCardsDisplayCount)
+        XCTAssertEqual(expectedMin, HiPayCardEntryController(configuration: configuration, savedCardsDisplayCount: Int.min).savedCardsDisplayCount)
     }
 
     @MainActor

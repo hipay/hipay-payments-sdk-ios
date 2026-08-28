@@ -1,5 +1,5 @@
 import Foundation
-import HiPayFullservice
+import HiPayPayments
 
 /// The single error type surfaced by the SDK's Swift API (mirrors the KMP
 /// `HiPayErrorCode` taxonomy, D3). Messages are SDK-synthesized and safe to

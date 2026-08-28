@@ -1,5 +1,5 @@
 import Foundation
-import HiPayFullservice
+import HiPayPayments
 
 /// Redirect outcome carried by the return deep link — informational only:
 /// confirm the final state via `HiPayPayment.getTransaction` (FR9).
@@ -21,7 +21,7 @@ public struct HiPayCallbackResult: Sendable {
 extension HiPay {
 
     /// Parses a HiPay return deep link
-    /// (`{scheme}://hipay-fullservice/gateway/orders/{orderId}/{status}?…`).
+    /// (`{scheme}://hipay-payments/gateway/orders/{orderId}/{status}?…`).
     public static func parseCallback(_ url: URL) throws -> HiPayCallbackResult {
         do {
             let kmp = try CallbackUrlParser.shared.parse(url: url.absoluteString)

@@ -1,6 +1,6 @@
-import HiPayFullservice
+import HiPayPayments
 
-// Swift facade over the HiPayFullservice KMP framework (architecture D4):
+// Swift facade over the HiPayPayments KMP framework (architecture D4):
 // 100% of the public iOS API lives here; the ObjC export of the KMP framework
 // is an internal detail merchants never see.
 //

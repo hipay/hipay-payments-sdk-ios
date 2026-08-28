@@ -1,6 +1,6 @@
 // PCI: com.hipay.card path — never log here; masked pan + expiry only, never a token.
 import HiPayCore
-import HiPayFullservice
+import HiPayPayments
 
 /// A transient one-click payment failure published by `HiPayCardEntryController` — the Swift
 /// face of the KMP `OneClickError`, keeping Kotlin types off the public surface. Carries the

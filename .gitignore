@@ -1,6 +1,6 @@
 .DS_Store
 # KMP build artifact consumed by the SPM package (rebuilt via ../scripts/build-xcframework.sh)
-/HiPayFullservice.xcframework/
+/HiPayPayments.xcframework/
 /.build/
 .swiftpm/
 xcuserdata/

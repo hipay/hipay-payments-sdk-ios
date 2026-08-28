@@ -1,5 +1,5 @@
 import Foundation
-import HiPayFullservice
+import HiPayPayments
 
 /// Optional customer / shipping details attached to an order (FR27, story 6.1).
 /// All fields are optional; a `nil` field is NOT sent.

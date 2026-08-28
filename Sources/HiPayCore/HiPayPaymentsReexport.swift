@@ -8,4 +8,4 @@
 // widely used for facade modules, but not formally supported), and it widens the facade's namespace
 // to the whole shared surface. The alternative — hand-written Swift wrappers for every shared type
 // exposed to integrators — is the cleaner long-term shape and belongs to a dedicated facade pass.
-@_exported import HiPayFullservice
+@_exported import HiPayPayments

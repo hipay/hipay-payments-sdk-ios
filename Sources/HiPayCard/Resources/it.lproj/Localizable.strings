@@ -33,6 +33,9 @@
 "A11Y_SAVED_CARD" = "%1$@ che termina con %2$@, scade %3$@";
 "A11Y_EXPANDED" = "espanso";
 "A11Y_COLLAPSED" = "compresso";
+"LABEL_SHOW_MORE" = "Mostra altre";
+"LABEL_SHOW_LESS" = "Mostra meno";
+"A11Y_SHOW_LESS_BLOCKED" = "Non disponibile finché la carta selezionata è più in basso nell'elenco";
 /* PROVISIONAL delete copy — NOT yet legally/UX approved; finalized in a later release. */
 "LABEL_DELETE_CARD" = "Elimina carta";
 "CONFIRM_DELETE_CARD" = "Rimuovere questa carta salvata? Potrai salvarla di nuovo al prossimo pagamento.";

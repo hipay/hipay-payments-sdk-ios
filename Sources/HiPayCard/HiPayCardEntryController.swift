@@ -3,7 +3,7 @@ import AuthenticationServices
 import Combine
 import UIKit
 import HiPayCore
-import HiPayFullservice
+import HiPayPayments
 
 /// How the SDK presents the 3DS challenge when `pay(threeDS:)` hits a `FORWARDING` transaction
 /// (story 11.13). Both modes are turnkey — `pay()` returns the FINAL confirmed transaction; the
@@ -82,6 +82,18 @@ public final class HiPayCardEntryController: ObservableObject {
     /// ``pay(orderId:amount:currency:description:language:redirectScheme:authenticationIndicator:signature:customer:shipping:threeDS:saveCard:)``
     /// routes to that stored token (no CVV) — call ``selectNewCard()`` first to force card entry.
     public let oneClickEnabled: Bool
+
+    /// How many saved cards the one-click UI shows before a "Show more" control.
+    /// Clamped to the shared Kotlin bounds (default 3, range 1...10); bounds only the DISPLAY —
+    /// every saved card is still persisted.
+    public let savedCardsDisplayCount: Int
+
+    /// Ask the payer to confirm before a saved card is deleted. OFF by default: reaching the trash
+    /// already takes two deliberate steps (left-swipe or long-press, then tapping the trash), so a
+    /// dialog on top adds friction rather than intent. The confirmation is shown REGARDLESS of this
+    /// flag when the request comes from the VoiceOver "Delete" action, which is a single step with no
+    /// trash to aim at.
+    public let confirmCardDeletion: Bool
 
     /// The saved cards offered for one-click, most recently used/saved first (expired cards
     /// purged); empty when none or not loaded. Refreshed via ``refreshSavedCards()``.
@@ -279,11 +291,22 @@ public final class HiPayCardEntryController: ObservableObject {
         configuration: HiPayConfiguration,
         allowedNetworks: [HiPayCardNetwork] = [],
         oneClickEnabled: Bool = false,
+        savedCardsDisplayCount: Int = Int(SavedCardsDisplayCountKt.DEFAULT_SAVED_CARDS_DISPLAY_COUNT),
+        confirmCardDeletion: Bool = false,
         currency: String = "EUR"
     ) {
         self.configuration = configuration
         self.allowedNetworks = allowedNetworks
         self.oneClickEnabled = oneClickEnabled
+        // Clamped by the shared Kotlin contract itself (SavedCardsDisplayCount.kt) rather than by
+        // re-stated literals, so the bounds cannot drift between the platforms. `clamping:` keeps a
+        // caller-supplied value outside Int32 from trapping on the way in.
+        self.confirmCardDeletion = confirmCardDeletion
+        self.savedCardsDisplayCount = Int(
+            SavedCardsDisplayCountKt.coerceSavedCardsDisplayCount(
+                count: Int32(clamping: savedCardsDisplayCount)
+            )
+        )
         self.accountCurrency = currency
         // Re-render the card when the shared HiPaySettings language changes at runtime (no re-init).
         // The shared settings is the KMP type; bridge its change listener to a SwiftUI republish.
@@ -789,13 +812,16 @@ public final class HiPayCardEntryController: ObservableObject {
             authenticationIndicator: authenticationIndicator,
             signature: signature,
             customer: customer,
-            shipping: shipping
+            shipping: shipping,
+            // Declared on the order that ENROLS the card-on-file, from it: the gateway contract asks
+            // for it "including the first transaction and the subsequent ones".
+            oneClick: effectiveSave
         )
         let final = try await resolve3DS(tx, redirectScheme: redirectScheme, signature: signature, threeDS: threeDS)
         if effectiveSave, final.state == .completed {
             // Fail-soft: the payment outcome is already decided; save() reports failure as a
             // boolean, never a thrown error. Record the outcome for the host (popup/confirmation).
-            if let newSavedCard = SavedCardPaymentKt.savedCardFromToken(token: token.kmp) {
+            if let newSavedCard = SavedCardPaymentKt.savedCardFromToken(token: token.kmp, paymentProduct: paymentProduct) {
                 let persisted = await savedCardStore.with { $0.save(card: newSavedCard, consentGiven: true) }
                 lastSaveOutcome = persisted ? .saved : .storageFailed
             } else {

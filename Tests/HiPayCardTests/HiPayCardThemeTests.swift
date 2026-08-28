@@ -1,5 +1,5 @@
 import SwiftUI
-import HiPayFullservice
+import HiPayPayments
 import XCTest
 @testable import HiPayCard
 
@@ -21,20 +21,33 @@ final class HiPayCardThemeTests: XCTestCase {
 
     // MARK: hipayDefault mirrors the shared contract
 
-    func testHipayDefaultMirrorsTheSharedContractValues() {
+    func testHipayDefaultKeepsTheSharedMetricsAndFollowsTheAppearance() {
         let theme = HiPayCardTheme.hipayDefault
-        XCTAssertEqual(theme.textColor, Color(hiPayArgb: 0xFF111111))
-        XCTAssertEqual(theme.placeholderColor, Color(hiPayArgb: 0xFF8E8E93))
-        XCTAssertEqual(theme.iconColor, Color(hiPayArgb: 0xFF8E8E93))
-        XCTAssertEqual(theme.invalidTextColor, Color(hiPayArgb: 0xFFD32F2F))
+        // Metrics stay pinned to the shared contract — the geometry is identical on every platform.
         XCTAssertEqual(theme.fontSize, 16)
         XCTAssertEqual(theme.fontWeight, .regular)
         XCTAssertFalse(theme.isItalic)
-        XCTAssertEqual(theme.borderColor, Color(hiPayArgb: 0xFFC7C7CC))
         XCTAssertEqual(theme.borderWidth, 1)
         XCTAssertEqual(theme.cornerRadius, 12)
-        XCTAssertEqual(theme.backgroundColor, Color(hiPayArgb: 0xFFFFFFFF))
         XCTAssertEqual(theme.fieldHeight, 42)
+        // Colours are the system's SEMANTIC ones, so the default tracks light/dark by itself. They
+        // are deliberately NOT the contract's fixed light values any more: asserting those is what
+        // let an opaque white field ship onto dark hosts.
+        XCTAssertEqual(theme.textColor, Color(uiColor: .label))
+        XCTAssertEqual(theme.placeholderColor, Color(uiColor: .secondaryLabel))
+        XCTAssertEqual(theme.iconColor, Color(uiColor: .secondaryLabel))
+        XCTAssertEqual(theme.invalidTextColor, Color(uiColor: .systemRed))
+        XCTAssertEqual(theme.borderColor, Color(uiColor: .separator))
+        XCTAssertEqual(theme.backgroundColor, Color(uiColor: .secondarySystemBackground))
+    }
+
+    func testAnExplicitStyleIsHonouredVerbatim() {
+        // The counterpart of the rule above: a theme built from a style keeps that style's colours,
+        // appearance or not. Adapting them per light/dark is the integrator's call.
+        let theme = HiPayCardTheme(style: HiPayCardEntryStyle.companion.hipayDefault)
+        XCTAssertEqual(theme.textColor, Color(hiPayArgb: 0xFF111111))
+        XCTAssertEqual(theme.backgroundColor, Color(hiPayArgb: 0xFFFFFFFF))
+        XCTAssertEqual(theme.borderColor, Color(hiPayArgb: 0xFFC7C7CC))
     }
 
     // MARK: font enums

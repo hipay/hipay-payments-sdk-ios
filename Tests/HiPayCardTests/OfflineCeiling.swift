@@ -1,5 +1,5 @@
 import Foundation
-import HiPayFullservice
+import HiPayPayments
 @testable import HiPayCard
 
 /// The component asks the account which card networks it may offer as soon as the view appears, and

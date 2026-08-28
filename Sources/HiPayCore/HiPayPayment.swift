@@ -1,5 +1,5 @@
 import Foundation
-import HiPayFullservice
+import HiPayPayments
 
 /// Headless payment facade (D4): order creation and transaction fetch.
 ///
@@ -16,7 +16,7 @@ public final class HiPayPayment {
 
     /// Creates a card order. The five redirect URLs follow the HiPay deep-link
     /// convention, derived from your app's `redirectScheme`
-    /// (`{scheme}://hipay-fullservice/gateway/orders/{orderId}/{status}`).
+    /// (`{scheme}://hipay-payments/gateway/orders/{orderId}/{status}`).
     ///
     /// - Parameter authenticationIndicator: 0 bypass 3DS, 1 if available, 2 mandatory.
     /// - Parameter oneClick: `true` for a saved-card payment reusing a stored
@@ -39,7 +39,10 @@ public final class HiPayPayment {
         shipping: HiPayCustomerInfo? = nil,
         oneClick: Bool = false
     ) async throws -> HiPayTransaction {
-        let base = "\(redirectScheme)://hipay-fullservice/gateway/orders/\(orderId)"
+        // Built from the shared Kotlin contract, never from a Swift copy of the host: the parser on
+        // the return side reads the same constant, and a divergence would mean the browser comes back
+        // to a URL nothing handles — the payment would never resume, silently.
+        let base = CallbackHostKt.hipayCallbackBase(scheme: redirectScheme, orderId: orderId)
         let order = OrderRequest(
             orderId: orderId,
             paymentProduct: paymentProduct,

@@ -1,7 +1,7 @@
 // PCI: card path — NEVER log here, never expose the raw PAN or token.
 import Foundation
 import HiPayCore
-import HiPayFullservice
+import HiPayPayments
 import Security
 
 // One generic-password item per namespace: FIXED service + namespace as the account — the same
