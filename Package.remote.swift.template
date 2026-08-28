@@ -7,7 +7,8 @@ import PackageDescription
 //
 // This mirrors the repository's Package.swift exactly EXCEPT the HiPayPayments target,
 // which is a *remote* binaryTarget(url:checksum:) instead of a local binaryTarget(path:).
-// The two Swift products and the HiPayCard resources are unchanged.
+// The Swift products, targets and the HiPayCard resources are unchanged — keep this file in step
+// with Package.swift whenever a product or target is added, or the tag ships an incomplete package.
 //
 // This manifest exists ONLY on release tags: the branch keeps the local one so day-to-day
 // development builds against the XCFramework on disk.
@@ -22,6 +23,9 @@ let package = Package(
         .library(name: "HiPayCore", targets: ["HiPayCore"]),
         // Card entry UI layer on top of HiPayCore.
         .library(name: "HiPayCard", targets: ["HiPayCard"]),
+        // Apple Pay button + payment (PassKit), opt-in: a merchant who does not import this
+        // links no PassKit code / Apple Pay API (modularity, Option A).
+        .library(name: "HiPayApplePay", targets: ["HiPayApplePay"]),
     ],
     targets: [
         // KMP binary hosted as a GitHub Release asset; integrity pinned by checksum.
@@ -40,6 +44,12 @@ let package = Package(
             // Card-network brand icons (neutral + Visa/MC/Amex/Maestro/BCMC/CB),
             // loaded via Image(_:bundle: .module).
             resources: [.process("Resources")]
+        ),
+        // Apple Pay: the native PassKit button + (later) the payment orchestration on top of
+        // HiPayCore. PassKit is a weak-linked system framework; nothing here loads unless imported.
+        .target(
+            name: "HiPayApplePay",
+            dependencies: ["HiPayCore"]
         ),
     ]
 )
