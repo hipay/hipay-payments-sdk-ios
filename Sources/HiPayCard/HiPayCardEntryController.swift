@@ -816,6 +816,9 @@ public final class HiPayCardEntryController: ObservableObject {
             signature: signature,
             customer: customer,
             shipping: shipping,
+            // Declared on the order that ENROLS the card-on-file, from it: the gateway contract asks
+            // for it "including the first transaction and the subsequent ones".
+            oneClick: effectiveSave,
             options: options
         )
         let final = try await resolve3DS(tx, redirectScheme: redirectScheme, signature: signature, threeDS: threeDS)
