@@ -107,6 +107,9 @@ public struct HiPayApplePayOrder: Sendable {
     public var language: String
     /// Computed by the merchant backend — never in the app in production.
     public var signature: String?
+    /// Optional gateway parameters for this order. A wallet payment ends in an ordinary order, so it
+    /// takes exactly what a card payment takes — see ``HiPayOrderOptions``.
+    public var options: HiPayOrderOptions?
 
     public init(
         orderId: String,
@@ -116,7 +119,8 @@ public struct HiPayApplePayOrder: Sendable {
         description: String,
         redirectScheme: String,
         language: String = "en_GB",
-        signature: String? = nil
+        signature: String? = nil,
+        options: HiPayOrderOptions? = nil
     ) {
         self.orderId = orderId
         self.amount = amount
@@ -126,6 +130,7 @@ public struct HiPayApplePayOrder: Sendable {
         self.redirectScheme = redirectScheme
         self.language = language
         self.signature = signature
+        self.options = options
     }
 }
 
@@ -250,6 +255,9 @@ public enum HiPayApplePayPayment {
         // Resolved outside the do/catch: it already throws a mapped HiPayError, and re-wrapping it
         // through HiPayError.from would erase the case (a Swift enum carries no KotlinException).
         let resolved = try await eligibility(configuration, order.currency, customerCountry, applePay)
+        // Built outside the do/catch for the same reason: a rejected option already throws a mapped
+        // HiPayError, and passing it back through HiPayError.from would erase the case.
+        let kmpOrder = try order.kmp
         do {
             let result = try await ApplePayPresenter_iosKt.runApplePayPayment(
                 config: configuration.kmpConfig,
@@ -259,7 +267,7 @@ public enum HiPayApplePayPayment {
                 // channels fail identically — rather than PassKit failing to present, which surfaces as
                 // an indistinguishable transport-looking error.
                 resolvedNetworks: resolved.state == .available ? resolved.resolvedNetworks : [],
-                order: order.kmp
+                order: kmpOrder
             )
             return HiPayApplePayOutcome(result)
         } catch {
@@ -313,17 +321,23 @@ private extension HiPayApplePayNetwork {
 }
 
 private extension HiPayApplePayOrder {
+    /// Throws when `options` is rejected — the validation is the shared Kotlin one, so a wallet order
+    /// and a card order refuse exactly the same inputs.
     var kmp: ApplePayOrder {
-        ApplePayOrder(
-            orderId: orderId,
-            amount: amount,
-            currency: currency,
-            countryCode: countryCode,
-            description: description,
-            redirectScheme: redirectScheme,
-            language: language,
-            signature: signature
-        )
+        get throws {
+            let order = ApplePayOrder(
+                orderId: orderId,
+                amount: amount,
+                currency: currency,
+                countryCode: countryCode,
+                description: description,
+                redirectScheme: redirectScheme,
+                language: language,
+                signature: signature
+            )
+            guard let options else { return order }
+            return order.withOptions(options: try options.kmp)
+        }
     }
 }
 

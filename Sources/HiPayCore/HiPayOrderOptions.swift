@@ -55,7 +55,10 @@ public struct HiPayOrderOptions: Sendable {
     /// `notifyUrl`, a blank value, or a reserved `custom` name. The
     /// validation is the shared one, so both channels refuse exactly the same inputs.
 
-    var kmp: OrderOptions {
+    /// `package`, not `internal`: the Apple Pay module needs it to attach options to a wallet order,
+    /// and not `public`, because that would put the Kotlin `OrderOptions` type in the surface
+    /// merchants see (D4 — the KMP models never cross into host code).
+    package var kmp: OrderOptions {
         get throws {
             let builder = OrderOptions.Builder()
             do {
