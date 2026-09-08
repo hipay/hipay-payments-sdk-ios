@@ -1091,7 +1091,10 @@ public final class HiPayCardEntryController: ObservableObject {
 /// One saved-card store per controller, every access (creation included) serialized on a
 /// private queue: the KMP `SecureCardStore` is not thread-safe, and the store contract
 /// mandates off-main access. Not @MainActor on purpose — the queue IS the confinement.
-private final class SavedCardStoreBox {
+///
+/// `@unchecked` states that confinement to the compiler, which cannot infer it from a
+/// `DispatchQueue`: without it, handing `self` to the queue's `@Sendable` closure warns.
+private final class SavedCardStoreBox: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.hipay.card.savedcards")
     private let configuration: HiPayConfiguration
     private var store: SecureCardStore?

@@ -637,6 +637,8 @@ public struct HiPayCardEntryView: View {
                     .foregroundColor(theme.textColor)
             }
             .frame(minHeight: 44)
+            // The switch's rim spills past its bounds, so flush to the edge it reads as overflow.
+            .padding(.trailing, 2)
             .accessibilityIdentifier("hipay.card.saveswitch")
             Text(loc(.consentSaveCard))
                 .font(.caption)
