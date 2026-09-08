@@ -132,7 +132,7 @@ public struct HiPayCardEntryView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: theme.fieldSpacing) {
             // Also composed when the list just emptied with a section-level one-click error to
             // show (the last card was purged as no longer valid) — the payer must learn why.
             if controller.oneClickEnabled,

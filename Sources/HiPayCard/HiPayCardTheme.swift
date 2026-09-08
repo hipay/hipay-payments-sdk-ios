@@ -71,6 +71,11 @@ public struct HiPayCardTheme: Equatable, Sendable {
     public var fieldHeight: CGFloat {
         didSet { Self.requireFinite(fieldHeight, "fieldHeight", atLeast: .leastNormalMagnitude) }
     }
+    /// Vertical gap between fields in points. Must be finite and >= 0. Defaults to this platform's
+    /// historical value, which the shared contract deliberately leaves unset (`fieldSpacing == nil`)
+    public var fieldSpacing: CGFloat = platformFieldSpacing {
+        didSet { Self.requireFinite(fieldSpacing, "fieldSpacing", atLeast: 0) }
+    }
 
     /// The SDK's default look. Unlike a theme built from an explicit `HiPayCardEntryStyle`, this one
     /// uses the SYSTEM's semantic colours, so it tracks light/dark without the integrator wiring
@@ -102,6 +107,7 @@ public struct HiPayCardTheme: Equatable, Sendable {
         cornerRadius = CGFloat(style.cornerRadius)
         backgroundColor = Color(hiPayArgb: style.backgroundColor)
         fieldHeight = CGFloat(style.fieldHeight)
+        fieldSpacing = style.fieldSpacing.map { CGFloat(truncating: $0) } ?? platformFieldSpacing
     }
 
     /// The entered-text font. `scale` carries the host's Dynamic Type factor (see
@@ -143,3 +149,6 @@ extension Color {
         )
     }
 }
+
+/// The gap when the shared style leaves `fieldSpacing` unset — this platform's historical value.
+private let platformFieldSpacing: CGFloat = 12
