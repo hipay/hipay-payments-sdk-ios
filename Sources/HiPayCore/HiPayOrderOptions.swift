@@ -15,7 +15,8 @@ import HiPayPayments
 ///
 /// A struct with defaulted properties rather than the KMP builder: adding a property here stays
 /// source-compatible for you, which is the same guarantee the Kotlin side gets from its builder.
-/// `custom` is the escape hatch for a gateway parameter this SDK does not model.
+/// `customData` carries your own data; `custom` is the escape hatch for a gateway parameter this SDK
+/// does not model.
 public struct HiPayOrderOptions: Sendable {
     /// Overrides the back-office notification URL for this order only. Must be `http(s)`.
     ///
@@ -33,8 +34,18 @@ public struct HiPayOrderOptions: Sendable {
     /// Shopping-cart JSON, as the gateway documents it. Passed through verbatim.
     public var basket: String?
 
-    /// Any other gateway parameter, by its exact wire name. Names the SDK owns are rejected when the
-    /// order is built — see `OrderOptions.RESERVED_FIELDS`.
+    /// Your own data, carried in the gateway's `custom_data` and shown on the transaction in the back
+    /// office. The keys are yours to choose.
+    ///
+    /// This — not `custom` — is where data the gateway does not model belongs: the order schema
+    /// accepts no arbitrary top-level parameter, while `custom_data` takes any key.
+    public var customData: [String: String]
+
+    /// A gateway parameter the SDK does not model yet, by its exact wire name — `shipping`, `tax` and
+    /// `browser_info` are examples. NOT for your own data: the order schema is closed, so a name of
+    /// your invention is refused. Use `customData` for that.
+    ///
+    /// Names the SDK owns are rejected when the order is built — see `OrderOptions.RESERVED_FIELDS`.
     public var custom: [String: String]
 
     public init(
@@ -42,12 +53,14 @@ public struct HiPayOrderOptions: Sendable {
         softDescriptor: String? = nil,
         longDescription: String? = nil,
         basket: String? = nil,
+        customData: [String: String] = [:],
         custom: [String: String] = [:]
     ) {
         self.notifyUrl = notifyUrl
         self.softDescriptor = softDescriptor
         self.longDescription = longDescription
         self.basket = basket
+        self.customData = customData
         self.custom = custom
     }
 
@@ -67,6 +80,9 @@ public struct HiPayOrderOptions: Sendable {
                 if let longDescription { _ = builder.longDescription(description: longDescription) }
                 if let basket { _ = builder.basket(json: basket) }
                 // Sorted so a rejected entry always reports the same one, whatever the dictionary order.
+                for name in customData.keys.sorted() {
+                    _ = builder.customData(name: name, value: customData[name]!)
+                }
                 for name in custom.keys.sorted() {
                     _ = builder.custom(name: name, value: custom[name]!)
                 }
