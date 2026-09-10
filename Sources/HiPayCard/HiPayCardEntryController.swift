@@ -953,14 +953,19 @@ public final class HiPayCardEntryController: ObservableObject {
         }
         // 3DS challenge: the SDK presents it and returns the FINAL transaction (story 11.13).
         let reference = tx.transactionReference
+        // Set once for both modes, at the point the shared controller sets it too: the challenge
+        // starts here whoever ends up presenting it, so neither mode can report the wrong step.
+        paymentPhase = .authenticating
         switch threeDS {
         case .inAppSession:
             guard let callback = await present3DSInApp(url, callbackScheme: redirectScheme) else {
                 // Sheet cancelled → DON'T assume an abort: reconcile with the server,
                 // same as the external/CMP paths. The user may have validated 3DS then dismissed.
+                paymentPhase = .confirming
                 return await reconcileOrPending(reference: reference, signature: signature)
             }
             let parsedRef = (try? HiPay.parseCallback(callback))?.queryParams["reference"]
+            paymentPhase = .confirming
             return await reconcileOrPending(reference: reference ?? parsedRef, signature: signature)
         case .externalBrowser:
             // Open external Safari and suspend until the host forwards the return via resume3DS(_:),
@@ -1034,7 +1039,7 @@ public final class HiPayCardEntryController: ObservableObject {
     /// Presents the 3DS page in-app (ASWebAuthenticationSession) bound to `callbackScheme`; resumes
     /// with the callback URL, or nil if cancelled/errored. Retains the session for its lifetime.
     private func present3DSInApp(_ url: URL, callbackScheme: String) async -> URL? {
-        paymentPhase = .authenticating
+        // The phase is set by resolve3DS for both modes — one source, so they cannot drift.
         return await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
             let session = ASWebAuthenticationSession(url: url, callbackURLScheme: callbackScheme) { [weak self] callbackURL, _ in
                 self?.webAuthSession = nil // release the finished session (don't retain it until the next pay())
