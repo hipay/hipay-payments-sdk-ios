@@ -109,13 +109,11 @@ public struct HiPayCardEntryView: View {
     // When the host opts out, all groups use 0 (neutral) so the host controls order.
     private func order(_ priority: Double) -> Double { setsAccessibilityOrder ? priority : 0 }
 
-    // The TextFields bind the raw @Published values; formatting is re-applied
-    // from .onChange via the controller's *Edited() handlers — a write from
-    // the binding setter or a didSet only renders on focus loss (iOS 15/16).
-    // With the saved card selected, the entry fields are not rendered — their values stay in
-    // the controller (nothing is cleared until a payment succeeds).
+    // Hidden with a saved card selected, and until the store answers: shown before the first load
+    // settles, the fields expand then collapse the instant the pre-selection lands.
     private var showEntryFields: Bool {
-        !(controller.oneClickEnabled && controller.selectedSavedCard != nil)
+        !(controller.oneClickEnabled
+            && (controller.selectedSavedCard != nil || !controller.savedCardsLoaded))
     }
 
     // The shared policy point decides where (and whether) the one-click error surfaces:
@@ -562,17 +560,20 @@ public struct HiPayCardEntryView: View {
     /// "New card": an actionable BUTTON whose expanded/collapsed value carries the meaning.
     private var newCardHeader: some View {
         let expanded = controller.selectedSavedCard == nil
-        return Button { controller.selectNewCard() } label: {
+        // Toggles both ways: selecting is idempotent, so re-tapping used to do nothing.
+        return Button { expanded ? controller.collapseNewCard() : controller.selectNewCard() } label: {
             HStack {
                 sectionHeader(loc(.labelNewCard))
                 Spacer()
-                Text(expanded ? "▾" : "▸")
-                    .font(.callout)
-                    .foregroundColor(expanded ? .accentColor : theme.iconColor)
+                // An SF Symbol, not "▾": that glyph fills a fraction of its box and reads tiny.
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 20, weight: .semibold))
+                    // Neutral in both states — an accent tint reads as a selection the SDK made.
+                    .foregroundColor(theme.iconColor)
                     .accessibilityHidden(true) // decorative: the button value carries the meaning
             }
             .frame(minHeight: 44)
-            .contentShape(Rectangle())
+            .contentShape(Rectangle()) // the WHOLE row is the target, not just the chevron
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(.isButton)
