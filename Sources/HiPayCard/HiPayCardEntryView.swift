@@ -45,6 +45,10 @@ public struct HiPayCardEntryView: View {
     // Saved-cards list expand/collapse (only meaningful in the new-card branch with >1 card):
     // while entering a new card the list collapses to the most-recent card; this re-expands it.
     @State private var savedCardsExpanded = false
+    // Armed once the first store answer has been laid out, so cards already saved appear instantly
+    // and only later arrivals and departures animate. Left false, the whole list would animate in
+    // on every open, which reads as the component assembling itself in front of the payer.
+    @State private var listSettled = false
     // The saved card pending deletion — drives the confirmation dialog (UI-local, not the controller).
     @State private var cardPendingDelete: HiPaySavedCard?
     // The saved card whose left-swipe trash action is currently revealed (one at a time).
@@ -136,6 +140,9 @@ public struct HiPayCardEntryView: View {
             if controller.oneClickEnabled,
                !controller.savedCards.isEmpty || oneClickSurface == .section {
                 savedCardsSections
+                    // The first card saved and the last one deleted take the whole section with
+                    // them; it fades with the fields rather than snapping in behind them.
+                    .transition(.opacity)
                     .accessibilitySortPriority(order(5))
             }
             if showEntryFields {
@@ -270,10 +277,19 @@ public struct HiPayCardEntryView: View {
         // account refuses.
         .task { await controller.loadAccountNetworksIfNeeded() }
         // One-click: load the saved card on appearance (no-op unless opted in — fail-soft).
-        .task { await controller.refreshSavedCards() }
+        .task {
+            await controller.refreshSavedCards()
+            // Deferred a runloop: the update carrying the first population must still be unanimated,
+            // so the flag can only turn true after SwiftUI has laid that one out.
+            DispatchQueue.main.async { listSettled = true }
+        }
         // Simple platform-standard expand/collapse when the selection changes — dropped to instant
         // under the reduce-motion accessibility setting (WCAG 2.3.3).
         .animation(reduceMotion ? nil : .default, value: controller.selectedSavedCard)
+        // Saving and deleting a card move the whole component: the row itself, the rows below it,
+        // the section around them and the entry fields that open or close in consequence. One
+        // animation on the list drives all four, on the same curve as the selection change.
+        .animation(listSettled && !reduceMotion ? .default : nil, value: controller.savedCards)
         // A payment starting snaps any revealed swipe shut. Delete is already unreachable mid-payment
         // (guards on the button, the drag, the long-press and the a11y action), but a red trash left
         // sitting open reads as available for the whole flow, 3DS round-trip included. Mirrors the
@@ -395,6 +411,9 @@ public struct HiPayCardEntryView: View {
                             ? controller.lastOneClickError.flatMap { $0.matches(card) ? $0 : nil }
                             : nil
                     )
+                    // A departing row leaves the layout at once and fades where it stood, so the
+                    // rows below slide up to close the gap instead of jumping once it is gone.
+                    .transition(.opacity)
                 }
                 if hasMore {
                     showMoreToggle(expanded: expanded, canCollapse: !selectionBeyondFold)
