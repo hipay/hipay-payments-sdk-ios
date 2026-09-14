@@ -141,6 +141,12 @@ public final class HiPayCardEntryController: ObservableObject {
         selectedNetwork = nil
         lastResolvedDigits = nil
         userDidSelect = false
+        // The blur flags too. Every inline error is blur-gated, so leaving them set shows four
+        // "required" errors against the four fields this method just emptied.
+        holderBlurred = false
+        numberBlurred = false
+        expiryBlurred = false
+        cvcBlurred = false
     }
 
     /// True while ``collapseNewCard()`` has a card to go back to.
@@ -1125,8 +1131,12 @@ public final class HiPayCardEntryController: ObservableObject {
                 multiUse: multiUse
             )
             // The CVV goes the moment it has been used: PCI-DSS forbids retaining it past
-            // authorisation. The other fields stay until the outcome, so a refusal costs no retyping.
+            // authorisation. Its blur flag goes WITH it: `cvcError` is blur-gated, so an emptied
+            // field that still counts as blurred turns red for the whole rest of the flow — the
+            // order call and, on the external-browser path, minutes of 3DS. The other fields go on
+            // the way out, in `clearEnteredCard`.
             cvc = ""
+            cvcBlurred = false
             return HiPayCardToken(kmpToken)
         } catch {
             throw HiPayError.from(error)
