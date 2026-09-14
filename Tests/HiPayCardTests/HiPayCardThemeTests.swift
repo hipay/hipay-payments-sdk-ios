@@ -97,6 +97,24 @@ final class HiPayCardThemeTests: XCTestCase {
         XCTAssertEqual(theme.cornerRadius, 20)
         XCTAssertEqual(theme.backgroundColor, Color(hiPayArgb: 0xFFE8EAF6))
         XCTAssertEqual(theme.fieldHeight, 64)
+        XCTAssertEqual(theme.fieldSpacing, 20)
+    }
+
+    /// `fieldSpacing` is the one style value the shared contract leaves unset, so an untouched style
+    /// must keep THIS platform's historical gap rather than adopt a shared default — that is what
+    /// stops an existing integration's layout from moving.
+    func testUnsetFieldSpacingKeepsThePlatformGap() {
+        XCTAssertEqual(HiPayCardTheme(style: brandStyleWithoutSpacing()).fieldSpacing, 12)
+        XCTAssertEqual(HiPayCardTheme.hipayDefault.fieldSpacing, 12)
+    }
+
+    private func brandStyleWithoutSpacing() -> HiPayCardEntryStyle {
+        HiPayCardEntryStyle(
+            textColor: 0xFF1A237E, placeholderColor: 0xFF7986CB, iconColor: 0xFF3949AB,
+            invalidTextColor: 0xFFC62828, fontFamily: nil, fontSize: 18, fontStyle: .italic,
+            fontWeight: .medium, borderColor: 0xFF3949AB, borderWidth: 2, cornerRadius: 20,
+            backgroundColor: 0xFFE8EAF6, fieldHeight: 64, fieldSpacing: nil
+        )
     }
 
     func testPerPropertyOverrideFromTheDefault() {
@@ -136,7 +154,8 @@ final class HiPayCardThemeTests: XCTestCase {
                 borderWidth: 1,
                 cornerRadius: 12,
                 backgroundColor: 0xFFFFFFFF,
-                fieldHeight: 42
+                fieldHeight: 42,
+                fieldSpacing: nil
             )
         )
     }
@@ -155,7 +174,8 @@ final class HiPayCardThemeTests: XCTestCase {
             borderWidth: 2,
             cornerRadius: 20,
             backgroundColor: 0xFFE8EAF6,
-            fieldHeight: 64
+            fieldHeight: 64,
+            fieldSpacing: 20
         )
     }
 }

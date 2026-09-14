@@ -132,7 +132,7 @@ public struct HiPayCardEntryView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: theme.fieldSpacing) {
             // Also composed when the list just emptied with a section-level one-click error to
             // show (the last card was purged as no longer valid) — the payer must learn why.
             if controller.oneClickEnabled,
@@ -637,6 +637,8 @@ public struct HiPayCardEntryView: View {
                     .foregroundColor(theme.textColor)
             }
             .frame(minHeight: 44)
+            // The switch's rim spills past its bounds, so flush to the edge it reads as overflow.
+            .padding(.trailing, 2)
             .accessibilityIdentifier("hipay.card.saveswitch")
             Text(loc(.consentSaveCard))
                 .font(.caption)

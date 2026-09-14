@@ -61,6 +61,9 @@ public final class HiPayCardEntryController: ObservableObject {
     /// Pay button with `!canPay || isProcessing`. Read-only — no integrator wiring needed.
     @Published public private(set) var isProcessing: Bool = false
 
+    /// Where the running payment is, for a host progress indicator; `nil` when idle. Read-only.
+    @Published public private(set) var paymentPhase: HiPayPaymentPhase?
+
     /// Result of the most recent `pay(saveCard: true)` save attempt, for the host to react to
     /// (e.g. a confirmation or a "card not saved" notice). `nil` when no save was attempted — a
     /// fresh `pay(saveCard: true)` resets it, and it stays nil when the payment does not complete.
@@ -761,7 +764,9 @@ public final class HiPayCardEntryController: ObservableObject {
         customer: HiPayCustomerInfo? = nil,
         shipping: HiPayCustomerInfo? = nil,
         threeDS: HiPayThreeDSMode = .inAppSession,
-        saveCard: Bool = false
+        saveCard: Bool = false,
+        /// Optional gateway parameters for this order — see ``HiPayOrderOptions``.
+        options: HiPayOrderOptions? = nil
     ) async throws -> HiPayTransaction {
         // One-click routing: with a saved card selected, the same host call pays via the
         // stored token — no tokenization, no CVV; the host's single touch-point is preserved.
@@ -784,14 +789,16 @@ public final class HiPayCardEntryController: ObservableObject {
                 customer: customer,
                 shipping: shipping,
                 threeDS: threeDS
-            )
+            ,
+                options: options)
         }
         // The component's save switch and the parameter express the same consent.
         let effectiveSave = saveCard || (oneClickEnabled && saveCardOptIn)
         if effectiveSave { lastSaveOutcome = nil }
         // Lock the fields for the whole flow (incl. the suspended 3DS); reset on every exit (11.14).
         isProcessing = true
-        defer { isProcessing = false }
+        paymentPhase = .tokenizing
+        defer { isProcessing = false; paymentPhase = nil }
         // Capture the chosen network BEFORE tokenize() clears the component state.
         // Falls back to the LOCALLY DETECTED network, never to a hardcoded brand: while the account
         // ceiling is still pending there is no selected network, and a blind "visa" would declare the
@@ -799,6 +806,7 @@ public final class HiPayCardEntryController: ObservableObject {
         let paymentProduct = (selectedNetwork ?? HiPayCardNetwork(CardNetworks.shared.detect(number: panDigits)))?
             .paymentProductCode ?? "visa"
         let token = try await tokenize(multiUse: effectiveSave)
+        paymentPhase = .creatingOrder
         let payment = HiPayPayment(configuration: configuration)
         let tx = try await payment.requestCardOrder(
             orderId: orderId,
@@ -815,7 +823,8 @@ public final class HiPayCardEntryController: ObservableObject {
             shipping: shipping,
             // Declared on the order that ENROLS the card-on-file, from it: the gateway contract asks
             // for it "including the first transaction and the subsequent ones".
-            oneClick: effectiveSave
+            oneClick: effectiveSave,
+            options: options
         )
         let final = try await resolve3DS(tx, redirectScheme: redirectScheme, signature: signature, threeDS: threeDS)
         if effectiveSave, final.state == .completed {
@@ -853,14 +862,18 @@ public final class HiPayCardEntryController: ObservableObject {
         signature: String? = nil,
         customer: HiPayCustomerInfo? = nil,
         shipping: HiPayCustomerInfo? = nil,
-        threeDS: HiPayThreeDSMode = .inAppSession
+        threeDS: HiPayThreeDSMode = .inAppSession,
+        /// Optional gateway parameters for this order — see ``HiPayOrderOptions``.
+        options: HiPayOrderOptions? = nil
     ) async throws -> HiPayTransaction {
         lastOneClickError = nil // a fresh attempt supersedes the previous outcome
         // Sampled before the (possibly long) 3DS round-trip: the reason must reflect the
         // card as it was when the payer tapped Pay.
         let expiredAtAttempt = OneClickErrorKt.savedCardExpiredNow(card: card.kmp)
         isProcessing = true
-        defer { isProcessing = false }
+        // No tokenization on this path: the stored token goes straight to the order.
+        paymentPhase = .creatingOrder
+        defer { isProcessing = false; paymentPhase = nil }
         let payment = HiPayPayment(configuration: configuration)
         let tx: HiPayTransaction
         do {
@@ -877,7 +890,8 @@ public final class HiPayCardEntryController: ObservableObject {
                 signature: signature,
                 customer: customer,
                 shipping: shipping,
-                oneClick: true
+                oneClick: true,
+                options: options
             )
         } catch let error as HiPayError {
             if case .cardNoLongerValid = error {
@@ -939,14 +953,19 @@ public final class HiPayCardEntryController: ObservableObject {
         }
         // 3DS challenge: the SDK presents it and returns the FINAL transaction (story 11.13).
         let reference = tx.transactionReference
+        // Set once for both modes, at the point the shared controller sets it too: the challenge
+        // starts here whoever ends up presenting it, so neither mode can report the wrong step.
+        paymentPhase = .authenticating
         switch threeDS {
         case .inAppSession:
             guard let callback = await present3DSInApp(url, callbackScheme: redirectScheme) else {
                 // Sheet cancelled → DON'T assume an abort: reconcile with the server,
                 // same as the external/CMP paths. The user may have validated 3DS then dismissed.
+                paymentPhase = .confirming
                 return await reconcileOrPending(reference: reference, signature: signature)
             }
             let parsedRef = (try? HiPay.parseCallback(callback))?.queryParams["reference"]
+            paymentPhase = .confirming
             return await reconcileOrPending(reference: reference ?? parsedRef, signature: signature)
         case .externalBrowser:
             // Open external Safari and suspend until the host forwards the return via resume3DS(_:),
@@ -973,6 +992,7 @@ public final class HiPayCardEntryController: ObservableObject {
         guard let pending = pending3DS else { return }
         pending3DS = nil
         clearExternalAbortWatcher() // a real callback arrived → stop watching for an abort
+        paymentPhase = .confirming
         Task { @MainActor in
             let parsedRef = (try? HiPay.parseCallback(url))?.queryParams["reference"]
             let tx = await reconcileOrPending(reference: pending.reference ?? parsedRef, signature: pending.signature)
@@ -1019,7 +1039,8 @@ public final class HiPayCardEntryController: ObservableObject {
     /// Presents the 3DS page in-app (ASWebAuthenticationSession) bound to `callbackScheme`; resumes
     /// with the callback URL, or nil if cancelled/errored. Retains the session for its lifetime.
     private func present3DSInApp(_ url: URL, callbackScheme: String) async -> URL? {
-        await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
+        // The phase is set by resolve3DS for both modes — one source, so they cannot drift.
+        return await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
             let session = ASWebAuthenticationSession(url: url, callbackURLScheme: callbackScheme) { [weak self] callbackURL, _ in
                 self?.webAuthSession = nil // release the finished session (don't retain it until the next pay())
                 continuation.resume(returning: callbackURL)
@@ -1075,7 +1096,10 @@ public final class HiPayCardEntryController: ObservableObject {
 /// One saved-card store per controller, every access (creation included) serialized on a
 /// private queue: the KMP `SecureCardStore` is not thread-safe, and the store contract
 /// mandates off-main access. Not @MainActor on purpose — the queue IS the confinement.
-private final class SavedCardStoreBox {
+///
+/// `@unchecked` states that confinement to the compiler, which cannot infer it from a
+/// `DispatchQueue`: without it, handing `self` to the queue's `@Sendable` closure warns.
+private final class SavedCardStoreBox: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.hipay.card.savedcards")
     private let configuration: HiPayConfiguration
     private var store: SecureCardStore?
