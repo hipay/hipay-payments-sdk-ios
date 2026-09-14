@@ -6,9 +6,9 @@
 #
 # The `workflow:` guard below is NOT optional. This repository had no CI at all, so adding one makes
 # GitLab attempt to create a pipeline on every push; with `ai-review` as the only job — itself gated
-# on `feature/*` and `hotfix/*` — a push to `develop` or `main` would fail with "pipeline has no
-# jobs". Restricting pipeline creation to the branches that actually carry a job avoids polluting
-# the repository with failed pipeline creations forever.
+# on `feature/*`, `bugfix/*` and `hotfix/*` — a push to `develop` or `main` would fail with
+# "pipeline has no jobs". Restricting pipeline creation to the branches that actually carry a job
+# avoids polluting the repository with failed pipeline creations forever.
 #
 # Why this project needs its own review MR: in the KMP monorepo this package is a git submodule, and
 # a merge-request diff renders a submodule as a single pointer line. The Swift changes are therefore
@@ -25,7 +25,7 @@ include:
 
 workflow:
   rules:
-    - if: $CI_COMMIT_REF_NAME =~ /^(feature|hotfix)\//
+    - if: $CI_COMMIT_REF_NAME =~ /^(feature|bugfix|hotfix)\//
     - when: never
 
 stages:
