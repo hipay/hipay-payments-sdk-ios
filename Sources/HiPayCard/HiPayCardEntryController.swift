@@ -192,14 +192,17 @@ public final class HiPayCardEntryController: ObservableObject {
     }
 
     /// Removes `card` from the saved-card store (in-component delete, driven by the gesture +
-    /// confirmation), then refreshes: a deleted **selected** card drops the selection to the
-    /// new-card branch, a **non-selected** one is preserved, the **last** one yields the no-card
-    /// state. Fail-visible — a failed store delete leaves the card in the refreshed list. No-op
-    /// unless ``oneClickEnabled``.
+    /// confirmation), then refreshes: a deleted **selected** card hands the selection to the most
+    /// recent card left, a **non-selected** one is preserved, and only the **last** one yields the
+    /// no-card state. Fail-visible — a failed store delete leaves the card in the refreshed list.
+    /// No-op unless ``oneClickEnabled``.
     public func deleteSavedCard(_ card: HiPaySavedCard) async {
         guard oneClickEnabled else { return }
+        let wasSelected = selectedSavedCard == card
         await savedCardStore.with { _ = $0.delete(card: card.kmp) }
         await reload(reselectMostRecent: false)
+        // Deleting the selected card hands selection to the most recent if another is saved
+        if wasSelected, selectedSavedCard == nil { selectedSavedCard = savedCards.first }
         // Deleting the card an error pointed at is an intent too — once the card is really
         // gone there is nothing left to recover, so don't keep a stale outcome observable.
         if let error = lastOneClickError, error.matches(card),
