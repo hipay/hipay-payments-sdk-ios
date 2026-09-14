@@ -97,9 +97,10 @@ public struct HiPayCardEntryView: View {
 
     // Themed placeholder (SwiftUI styles placeholders via the `prompt` Text, not the field's
     // foreground). The default placeholderColor matches the system placeholder gray, so the
-    // no-style path looks unchanged.
+    // no-style path looks unchanged. Dimmed with the rest of the field mid-payment: `prompt` sits
+    // outside the field's own foreground, so `EntryFieldStyle` cannot reach it.
     private func prompt(_ text: String) -> Text {
-        Text(text).foregroundColor(theme.placeholderColor)
+        Text(text).foregroundColor(theme.placeholderColor.hipayDimmed(unless: !controller.isProcessing))
     }
 
     // CVC is required (enabled) or not-applicable (disabled) — never a true "optional"
@@ -227,7 +228,10 @@ public struct HiPayCardEntryView: View {
                         .autocorrectionDisabled()
                         .focused($focus, equals: .cvc)
                         .disabled(!controller.isCvcRequired)
-                        .opacity(controller.isCvcRequired ? 1 : 0.4)
+                        // No `.opacity` of its own: `EntryFieldStyle` now dims a disabled field on
+                        // its text and border, at the factor the Compose surfaces use. Stacking a
+                        // whole-field opacity on top would dim the plate too and take the text to
+                        // barely legible — and Compose dims neither.
                         .modifier(EntryFieldStyle(theme: theme, valid: controller.cvcError == nil))
                         .accessibilityLabel(cvvLabel)
                         .accessibilityIdentifier("hipay.card.cvc")
@@ -787,16 +791,26 @@ private struct EntryFieldStyle: ViewModifier {
     let theme: HiPayCardTheme
     let valid: Bool
 
+    /// Locked while a payment is in flight — the component carries `.disabled(isProcessing)` and
+    /// SwiftUI cascades it here — and for the CVV of a card that does not use one.
+    ///
+    /// The dim has to be applied BY HAND: SwiftUI greys a disabled control only for as long as
+    /// nothing paints it explicitly, and this modifier always paints the themed colours. Without it
+    /// the field is locked but still reads as editable, for the whole flow and its 3DS round-trip.
+    // Qualified: HiPayCore exports its own `Environment`, so the bare attribute is ambiguous here.
+    @SwiftUI.Environment(\.isEnabled) private var isEnabled: Bool
+
     // Dynamic Type factor (1.0 at the default content size, .body curve): the themed font
     // keeps scaling like the system font it replaces. fieldHeight is a MINIMUM, so the
     // field grows with the scaled line instead of clipping the entered card data.
     @ScaledMetric(relativeTo: .body) private var typeScale: CGFloat = 1
 
     func body(content: Content) -> some View {
-        content
+        let text = theme.textColor.hipayDimmed(unless: isEnabled)
+        return content
             .font(theme.font(scale: typeScale))
-            .foregroundColor(theme.textColor)
-            .tint(theme.textColor) // caret — mirrors the CMP renderer's cursor color
+            .foregroundColor(text)
+            .tint(text) // caret — mirrors the CMP renderer's cursor color
             .padding(10)
             .frame(minHeight: theme.fieldHeight)
             .background(
@@ -806,9 +820,19 @@ private struct EntryFieldStyle: ViewModifier {
             .overlay(
                 RoundedRectangle(cornerRadius: theme.cornerRadius)
                     .stroke(
-                        valid ? theme.borderColor : theme.invalidTextColor,
+                        (valid ? theme.borderColor : theme.invalidTextColor)
+                            .hipayDimmed(unless: isEnabled),
                         lineWidth: theme.borderWidth
                     )
             )
+    }
+}
+
+private extension Color {
+    /// The disabled dim, at the factor the two Compose surfaces apply through their
+    /// `disabledTextColor` / `disabledIndicatorColor` / `disabledPlaceholderColor` — so a locked
+    /// field reads the same on the three platforms. Multiplies the colour's own alpha, as they do.
+    func hipayDimmed(unless enabled: Bool) -> Color {
+        enabled ? self : opacity(0.38)
     }
 }
