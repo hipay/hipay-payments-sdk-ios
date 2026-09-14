@@ -65,9 +65,9 @@ public struct HiPayOrderOptions: Sendable {
     }
 
     /// Builds the KMP value. Throws `HiPayError.validation` on a rejected value — a non-http
-    /// `notifyUrl`, a blank value, or a reserved `custom` name. The
-    /// validation is the shared one, so both channels refuse exactly the same inputs.
-
+    /// `notifyUrl`, a blank value, or a reserved `custom` name. The validation is the shared one,
+    /// so both channels refuse exactly the same inputs.
+    ///
     /// `package`, not `internal`: the Apple Pay module needs it to attach options to a wallet order,
     /// and not `public`, because that would put the Kotlin `OrderOptions` type in the surface
     /// merchants see (D4 — the KMP models never cross into host code).

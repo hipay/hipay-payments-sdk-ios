@@ -804,6 +804,7 @@ public final class HiPayCardEntryController: ObservableObject {
     /// is tokenized as reusable and persisted to the secure card store, but ONLY once this call
     /// itself observes a final COMPLETED (directly, or through the SDK-managed 3DS). A PENDING
     /// outcome never saves; storage failures are silent — the payment result is unaffected.
+    /// `options` carries the optional gateway parameters for this order — see ``HiPayOrderOptions``.
     public func pay(
         orderId: String,
         amount: String,
@@ -817,7 +818,6 @@ public final class HiPayCardEntryController: ObservableObject {
         shipping: HiPayCustomerInfo? = nil,
         threeDS: HiPayThreeDSMode = .inAppSession,
         saveCard: Bool = false,
-        /// Optional gateway parameters for this order — see ``HiPayOrderOptions``.
         options: HiPayOrderOptions? = nil
     ) async throws -> HiPayTransaction {
         // One-click routing: with a saved card selected, the same host call pays via the
@@ -840,9 +840,9 @@ public final class HiPayCardEntryController: ObservableObject {
                 signature: signature,
                 customer: customer,
                 shipping: shipping,
-                threeDS: threeDS
-            ,
-                options: options)
+                threeDS: threeDS,
+                options: options
+            )
         }
         // The component's save switch and the parameter express the same consent.
         let effectiveSave = saveCard || (oneClickEnabled && saveCardOptIn)
@@ -902,6 +902,7 @@ public final class HiPayCardEntryController: ObservableObject {
     /// reports the stored token as no longer usable, the card is purged from local storage and
     /// `HiPayError.cardNoLongerValid` is thrown — fall back to card entry. A declined payment is
     /// returned as a normal DECLINED transaction.
+    /// `options` carries the optional gateway parameters for this order — see ``HiPayOrderOptions``.
     public func payWithSavedCard(
         _ card: HiPaySavedCard,
         orderId: String,
@@ -915,7 +916,6 @@ public final class HiPayCardEntryController: ObservableObject {
         customer: HiPayCustomerInfo? = nil,
         shipping: HiPayCustomerInfo? = nil,
         threeDS: HiPayThreeDSMode = .inAppSession,
-        /// Optional gateway parameters for this order — see ``HiPayOrderOptions``.
         options: HiPayOrderOptions? = nil
     ) async throws -> HiPayTransaction {
         lastOneClickError = nil // a fresh attempt supersedes the previous outcome
