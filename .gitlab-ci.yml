@@ -23,6 +23,13 @@ include:
       #   card data, never expose the PAN or a stored token. Public API changes are breaking for
       #   integrators consuming HiPayCore/HiPayCard via SPM."
 
+# The component gates itself on feature|hotfix; a bugfix branch deserves the same review.
+ai-review:
+  rules:
+    - if: '$CI_COMMIT_REF_NAME =~ /^(feature|bugfix|hotfix)\// && $CI_OPEN_MERGE_REQUESTS'
+      when: manual
+    - when: never
+
 workflow:
   rules:
     - if: $CI_COMMIT_REF_NAME =~ /^(feature|bugfix|hotfix)\//
