@@ -98,4 +98,102 @@ final class HiPayOneClickTests: XCTestCase {
         )
         XCTAssertEqual("visa", SavedCardPaymentKt.savedCardPaymentProduct(card: unknown))
     }
+
+    /// Seeds 3 cards in order, so the store's MRU-first list is [CARD THREE, CARD TWO, CARD ONE].
+    private func seedCards() {
+        let store = makeStore()
+        for (i, spec) in [
+            ("411111xxxxxx1111", "VISA", "CARD ONE"),
+            ("510510xxxxxx2222", "MASTERCARD", "CARD TWO"),
+            ("411111xxxxxx3333", "VISA", "CARD THREE"),
+        ].enumerated() {
+            XCTAssertTrue(store.save(
+                card: SavedCard(
+                    token: String(repeating: String(i), count: 64),
+                    maskedPan: spec.0, network: spec.1, holder: spec.2,
+                    expiryMonth: "12", expiryYear: "2031"
+                ),
+                consentGiven: true
+            ))
+        }
+    }
+
+    // MARK: - The new-card row toggles both ways (mirrored in the Kotlin controllers)
+
+    @MainActor
+    func test_collapseNewCard_returnsToTheCardTheExpandWasLeftFrom() async {
+        seedCards()
+        let controller = HiPayCardEntryController(configuration: configuration, oneClickEnabled: true).withOfflineCeiling()
+        await controller.refreshSavedCards()
+        // Not the pre-selected MRU, so a fallback to the first card cannot pass by accident.
+        let chosen = controller.savedCards[1]
+        controller.selectSavedCard(chosen)
+
+        controller.selectNewCard()
+        XCTAssertNil(controller.selectedSavedCard)
+        XCTAssertTrue(controller.canCollapseNewCard)
+
+        controller.collapseNewCard()
+        XCTAssertEqual(chosen, controller.selectedSavedCard)
+        XCTAssertFalse(controller.canCollapseNewCard) // nothing left to collapse back to
+    }
+
+    /// The remembered card can be deleted while the fields are open. An inert control would look
+    /// broken for a reason the payer cannot see, so it falls back to the most recent one.
+    @MainActor
+    func test_collapseNewCard_fallsBackToTheMostRecentWhenTheRememberedCardIsGone() async {
+        seedCards()
+        let controller = HiPayCardEntryController(configuration: configuration, oneClickEnabled: true).withOfflineCeiling()
+        await controller.refreshSavedCards()
+        let chosen = controller.savedCards[1]
+        controller.selectSavedCard(chosen)
+        controller.selectNewCard()
+        await controller.deleteSavedCard(chosen)
+        // The deleted card was not the selected one (that is the new-card branch), so the delete
+        // re-selected nothing and the fields are still open.
+        XCTAssertNil(controller.selectedSavedCard)
+
+        controller.collapseNewCard()
+        XCTAssertEqual(controller.savedCards.first, controller.selectedSavedCard)
+    }
+
+    @MainActor
+    func test_collapseNewCard_isANoOpWithoutSavedCards() async {
+        let controller = HiPayCardEntryController(configuration: configuration, oneClickEnabled: true).withOfflineCeiling()
+        await controller.refreshSavedCards()
+        XCTAssertFalse(controller.canCollapseNewCard)
+        controller.collapseNewCard()
+        XCTAssertNil(controller.selectedSavedCard) // still the new-card branch
+    }
+
+    // MARK: - The load-settled flag the component gates its entry fields on
+
+    @MainActor
+    func test_savedCardsLoaded_isFalseUntilTheFirstLoadSettles() async {
+        seedCards()
+        let controller = HiPayCardEntryController(configuration: configuration, oneClickEnabled: true).withOfflineCeiling()
+        XCTAssertFalse(controller.savedCardsLoaded)
+        await controller.refreshSavedCards()
+        XCTAssertTrue(controller.savedCardsLoaded)
+        // Set LAST, so the component never renders a settled load with no selection applied.
+        XCTAssertEqual(controller.savedCards.first, controller.selectedSavedCard)
+    }
+
+    /// Fail-open: the flag means "nothing more is coming". Left false on the opted-out early exit,
+    /// the component would hide its entry fields for good.
+    @MainActor
+    func test_savedCardsLoaded_settlesEvenWithOneClickOff() async {
+        let controller = HiPayCardEntryController(configuration: configuration) // opt-in off
+        await controller.refreshSavedCards()
+        XCTAssertTrue(controller.savedCardsLoaded)
+    }
+
+    // MARK: - The phase a host reads to show its own progress wording
+
+    /// Idle is `nil`. The running phases need a live order call, so they are covered on the Kotlin
+    /// controllers, which have an order seam this one has no equivalent of.
+    @MainActor
+    func test_paymentPhase_isNilWhileIdle() {
+        XCTAssertNil(HiPayCardEntryController(configuration: configuration).paymentPhase)
+    }
 }

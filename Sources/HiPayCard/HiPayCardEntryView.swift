@@ -45,6 +45,10 @@ public struct HiPayCardEntryView: View {
     // Saved-cards list expand/collapse (only meaningful in the new-card branch with >1 card):
     // while entering a new card the list collapses to the most-recent card; this re-expands it.
     @State private var savedCardsExpanded = false
+    // Armed once the first store answer has been laid out, so cards already saved appear instantly
+    // and only later arrivals and departures animate. Left false, the whole list would animate in
+    // on every open, which reads as the component assembling itself in front of the payer.
+    @State private var listSettled = false
     // The saved card pending deletion — drives the confirmation dialog (UI-local, not the controller).
     @State private var cardPendingDelete: HiPaySavedCard?
     // The saved card whose left-swipe trash action is currently revealed (one at a time).
@@ -93,9 +97,10 @@ public struct HiPayCardEntryView: View {
 
     // Themed placeholder (SwiftUI styles placeholders via the `prompt` Text, not the field's
     // foreground). The default placeholderColor matches the system placeholder gray, so the
-    // no-style path looks unchanged.
+    // no-style path looks unchanged. Dimmed with the rest of the field mid-payment: `prompt` sits
+    // outside the field's own foreground, so `EntryFieldStyle` cannot reach it.
     private func prompt(_ text: String) -> Text {
-        Text(text).foregroundColor(theme.placeholderColor)
+        Text(text).foregroundColor(theme.placeholderColor.hipayDimmed(unless: !controller.isProcessing))
     }
 
     // CVC is required (enabled) or not-applicable (disabled) — never a true "optional"
@@ -109,13 +114,11 @@ public struct HiPayCardEntryView: View {
     // When the host opts out, all groups use 0 (neutral) so the host controls order.
     private func order(_ priority: Double) -> Double { setsAccessibilityOrder ? priority : 0 }
 
-    // The TextFields bind the raw @Published values; formatting is re-applied
-    // from .onChange via the controller's *Edited() handlers — a write from
-    // the binding setter or a didSet only renders on focus loss (iOS 15/16).
-    // With the saved card selected, the entry fields are not rendered — their values stay in
-    // the controller (nothing is cleared until a payment succeeds).
+    // Hidden with a saved card selected, and until the store answers: shown before the first load
+    // settles, the fields expand then collapse the instant the pre-selection lands.
     private var showEntryFields: Bool {
-        !(controller.oneClickEnabled && controller.selectedSavedCard != nil)
+        !(controller.oneClickEnabled
+            && (controller.selectedSavedCard != nil || !controller.savedCardsLoaded))
     }
 
     // The shared policy point decides where (and whether) the one-click error surfaces:
@@ -138,6 +141,9 @@ public struct HiPayCardEntryView: View {
             if controller.oneClickEnabled,
                !controller.savedCards.isEmpty || oneClickSurface == .section {
                 savedCardsSections
+                    // The first card saved and the last one deleted take the whole section with
+                    // them; it fades with the fields rather than snapping in behind them.
+                    .transition(.opacity)
                     .accessibilitySortPriority(order(5))
             }
             if showEntryFields {
@@ -222,7 +228,10 @@ public struct HiPayCardEntryView: View {
                         .autocorrectionDisabled()
                         .focused($focus, equals: .cvc)
                         .disabled(!controller.isCvcRequired)
-                        .opacity(controller.isCvcRequired ? 1 : 0.4)
+                        // No `.opacity` of its own: `EntryFieldStyle` now dims a disabled field on
+                        // its text and border, at the factor the Compose surfaces use. Stacking a
+                        // whole-field opacity on top would dim the plate too and take the text to
+                        // barely legible — and Compose dims neither.
                         .modifier(EntryFieldStyle(theme: theme, valid: controller.cvcError == nil))
                         .accessibilityLabel(cvvLabel)
                         .accessibilityIdentifier("hipay.card.cvc")
@@ -272,10 +281,19 @@ public struct HiPayCardEntryView: View {
         // account refuses.
         .task { await controller.loadAccountNetworksIfNeeded() }
         // One-click: load the saved card on appearance (no-op unless opted in — fail-soft).
-        .task { await controller.refreshSavedCards() }
+        .task {
+            await controller.refreshSavedCards()
+            // Deferred a runloop: the update carrying the first population must still be unanimated,
+            // so the flag can only turn true after SwiftUI has laid that one out.
+            DispatchQueue.main.async { listSettled = true }
+        }
         // Simple platform-standard expand/collapse when the selection changes — dropped to instant
         // under the reduce-motion accessibility setting (WCAG 2.3.3).
         .animation(reduceMotion ? nil : .default, value: controller.selectedSavedCard)
+        // Saving and deleting a card move the whole component: the row itself, the rows below it,
+        // the section around them and the entry fields that open or close in consequence. One
+        // animation on the list drives all four, on the same curve as the selection change.
+        .animation(listSettled && !reduceMotion ? .default : nil, value: controller.savedCards)
         // A payment starting snaps any revealed swipe shut. Delete is already unreachable mid-payment
         // (guards on the button, the drag, the long-press and the a11y action), but a red trash left
         // sitting open reads as available for the whole flow, 3DS round-trip included. Mirrors the
@@ -397,6 +415,9 @@ public struct HiPayCardEntryView: View {
                             ? controller.lastOneClickError.flatMap { $0.matches(card) ? $0 : nil }
                             : nil
                     )
+                    // A departing row leaves the layout at once and fades where it stood, so the
+                    // rows below slide up to close the gap instead of jumping once it is gone.
+                    .transition(.opacity)
                 }
                 if hasMore {
                     showMoreToggle(expanded: expanded, canCollapse: !selectionBeyondFold)
@@ -562,17 +583,20 @@ public struct HiPayCardEntryView: View {
     /// "New card": an actionable BUTTON whose expanded/collapsed value carries the meaning.
     private var newCardHeader: some View {
         let expanded = controller.selectedSavedCard == nil
-        return Button { controller.selectNewCard() } label: {
+        // Toggles both ways: selecting is idempotent, so re-tapping used to do nothing.
+        return Button { expanded ? controller.collapseNewCard() : controller.selectNewCard() } label: {
             HStack {
                 sectionHeader(loc(.labelNewCard))
                 Spacer()
-                Text(expanded ? "▾" : "▸")
-                    .font(.callout)
-                    .foregroundColor(expanded ? .accentColor : theme.iconColor)
+                // An SF Symbol, not "▾": that glyph fills a fraction of its box and reads tiny.
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 20, weight: .semibold))
+                    // Neutral in both states — an accent tint reads as a selection the SDK made.
+                    .foregroundColor(theme.iconColor)
                     .accessibilityHidden(true) // decorative: the button value carries the meaning
             }
             .frame(minHeight: 44)
-            .contentShape(Rectangle())
+            .contentShape(Rectangle()) // the WHOLE row is the target, not just the chevron
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(.isButton)
@@ -767,16 +791,26 @@ private struct EntryFieldStyle: ViewModifier {
     let theme: HiPayCardTheme
     let valid: Bool
 
+    /// Locked while a payment is in flight — the component carries `.disabled(isProcessing)` and
+    /// SwiftUI cascades it here — and for the CVV of a card that does not use one.
+    ///
+    /// The dim has to be applied BY HAND: SwiftUI greys a disabled control only for as long as
+    /// nothing paints it explicitly, and this modifier always paints the themed colours. Without it
+    /// the field is locked but still reads as editable, for the whole flow and its 3DS round-trip.
+    // Qualified: HiPayCore exports its own `Environment`, so the bare attribute is ambiguous here.
+    @SwiftUI.Environment(\.isEnabled) private var isEnabled: Bool
+
     // Dynamic Type factor (1.0 at the default content size, .body curve): the themed font
     // keeps scaling like the system font it replaces. fieldHeight is a MINIMUM, so the
     // field grows with the scaled line instead of clipping the entered card data.
     @ScaledMetric(relativeTo: .body) private var typeScale: CGFloat = 1
 
     func body(content: Content) -> some View {
-        content
+        let text = theme.textColor.hipayDimmed(unless: isEnabled)
+        return content
             .font(theme.font(scale: typeScale))
-            .foregroundColor(theme.textColor)
-            .tint(theme.textColor) // caret — mirrors the CMP renderer's cursor color
+            .foregroundColor(text)
+            .tint(text) // caret — mirrors the CMP renderer's cursor color
             .padding(10)
             .frame(minHeight: theme.fieldHeight)
             .background(
@@ -786,9 +820,19 @@ private struct EntryFieldStyle: ViewModifier {
             .overlay(
                 RoundedRectangle(cornerRadius: theme.cornerRadius)
                     .stroke(
-                        valid ? theme.borderColor : theme.invalidTextColor,
+                        (valid ? theme.borderColor : theme.invalidTextColor)
+                            .hipayDimmed(unless: isEnabled),
                         lineWidth: theme.borderWidth
                     )
             )
+    }
+}
+
+private extension Color {
+    /// The disabled dim, at the factor the two Compose surfaces apply through their
+    /// `disabledTextColor` / `disabledIndicatorColor` / `disabledPlaceholderColor` — so a locked
+    /// field reads the same on the three platforms. Multiplies the colour's own alpha, as they do.
+    func hipayDimmed(unless enabled: Bool) -> Color {
+        enabled ? self : opacity(0.38)
     }
 }

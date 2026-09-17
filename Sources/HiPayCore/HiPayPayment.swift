@@ -24,6 +24,7 @@ public final class HiPayPayment {
     ///   is customer-initiated e-commerce, not recurring). When the gateway
     ///   rejects the stored token as unusable, the error surfaces as
     ///   `HiPayError.cardNoLongerValid`.
+    /// - Parameter options: optional gateway parameters for this order — see ``HiPayOrderOptions``.
     public func requestCardOrder(
         orderId: String,
         amount: String,
@@ -38,7 +39,6 @@ public final class HiPayPayment {
         customer: HiPayCustomerInfo? = nil,
         shipping: HiPayCustomerInfo? = nil,
         oneClick: Bool = false,
-        /// Optional gateway parameters for this order — see ``HiPayOrderOptions``.
         options: HiPayOrderOptions? = nil
     ) async throws -> HiPayTransaction {
         // Built from the shared Kotlin contract, never from a Swift copy of the host: the parser on

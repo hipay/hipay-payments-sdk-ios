@@ -121,8 +121,48 @@ public final class HiPayCardEntryController: ObservableObject {
 
     /// Select the new-card branch (expands the entry fields).
     public func selectNewCard() {
+        // Remembered so ``collapseNewCard()`` can put back what the payer was looking at.
+        previousSelection = selectedSavedCard ?? previousSelection
         selectedSavedCard = nil
         lastOneClickError = nil // a new intent supersedes the previous failure
+    }
+
+    private var previousSelection: HiPaySavedCard?
+
+    /// Drops the entered card and everything derived from it. Called on EVERY exit of a payment,
+    /// success or failure: the payer sees what they submitted for the whole attempt, and nothing
+    /// sensitive outlives it.
+    private func clearEnteredCard() {
+        holder = ""
+        cardNumber = ""
+        expiry = ""
+        cvc = ""
+        networks = []
+        selectedNetwork = nil
+        lastResolvedDigits = nil
+        userDidSelect = false
+        // The blur flags too. Every inline error is blur-gated, so leaving them set shows four
+        // "required" errors against the four fields this method just emptied.
+        holderBlurred = false
+        numberBlurred = false
+        expiryBlurred = false
+        cvcBlurred = false
+    }
+
+    /// True while ``collapseNewCard()`` has a card to go back to.
+    public var canCollapseNewCard: Bool { selectedSavedCard == nil && !savedCards.isEmpty }
+
+    /// Re-selects the card that was showing before ``selectNewCard()``, which hides the entry fields
+    /// again. Typed values are untouched: they are hidden, not cleared, and come back on re-expand.
+    ///
+    /// Falls back to the most recent card when the remembered one has since been deleted — leaving
+    /// the control inert would look broken for a reason the payer cannot see.
+    public func collapseNewCard() {
+        let remembered = previousSelection.flatMap { savedCards.contains($0) ? $0 : nil }
+        guard let target = remembered ?? savedCards.first else { return }
+        selectedSavedCard = target
+        previousSelection = nil
+        lastOneClickError = nil
     }
 
     /// Save-switch handler (called from the component's toggle).
@@ -133,6 +173,11 @@ public final class HiPayCardEntryController: ObservableObject {
     // True once the first load has run: the first load pre-selects the most recent card; later
     // re-appearance loads must NOT (they preserve the payer's current choice — see `reload`).
     private var hasLoadedOnce = false
+
+    /// False until the first saved-cards load has settled. The component holds the entry fields back
+    /// until then: rendered before the store answers, they expand and immediately collapse again as
+    /// soon as a pre-selected card arrives.
+    @Published public private(set) var savedCardsLoaded = false
 
     /// (Re)loads ``savedCards`` for the component. Called on appearance and on each re-appearance.
     /// The selection is PRESERVED across a reload when it still resolves to a present card (a
@@ -153,14 +198,17 @@ public final class HiPayCardEntryController: ObservableObject {
     }
 
     /// Removes `card` from the saved-card store (in-component delete, driven by the gesture +
-    /// confirmation), then refreshes: a deleted **selected** card drops the selection to the
-    /// new-card branch, a **non-selected** one is preserved, the **last** one yields the no-card
-    /// state. Fail-visible — a failed store delete leaves the card in the refreshed list. No-op
-    /// unless ``oneClickEnabled``.
+    /// confirmation), then refreshes: a deleted **selected** card hands the selection to the most
+    /// recent card left, a **non-selected** one is preserved, and only the **last** one yields the
+    /// no-card state. Fail-visible — a failed store delete leaves the card in the refreshed list.
+    /// No-op unless ``oneClickEnabled``.
     public func deleteSavedCard(_ card: HiPaySavedCard) async {
         guard oneClickEnabled else { return }
+        let wasSelected = selectedSavedCard == card
         await savedCardStore.with { _ = $0.delete(card: card.kmp) }
         await reload(reselectMostRecent: false)
+        // Deleting the selected card hands selection to the most recent if another is saved
+        if wasSelected, selectedSavedCard == nil { selectedSavedCard = savedCards.first }
         // Deleting the card an error pointed at is an intent too — once the card is really
         // gone there is nothing left to recover, so don't keep a stale outcome observable.
         if let error = lastOneClickError, error.matches(card),
@@ -173,7 +221,9 @@ public final class HiPayCardEntryController: ObservableObject {
     /// (first load, and after a save / one-click payment); otherwise a still-present selection is
     /// kept and a vanished one (e.g. a purged card) falls back to the new-card branch.
     private func reload(reselectMostRecent: Bool) async {
-        guard oneClickEnabled else { return }
+        // Fail-open: the flag means "nothing more is coming". Left false on an early exit, the
+        // component would hide its entry fields for good.
+        guard oneClickEnabled else { savedCardsLoaded = true; return }
         let kmpCards = await savedCardStore.with { $0.list() }
         // Keep only cards whose resolved network the merchant accepts (empty allow-list → all).
         let filtered = kmpCards.filter { card in
@@ -191,6 +241,8 @@ public final class HiPayCardEntryController: ObservableObject {
             selectedSavedCard = cards.first { $0 == prev }
         }
         // else: the payer had chosen "new card" (nil) — leave it untouched.
+        // Last, so the view never sees 'loaded' with the selection not yet applied.
+        savedCardsLoaded = true
     }
 
     private let configuration: HiPayConfiguration
@@ -752,6 +804,7 @@ public final class HiPayCardEntryController: ObservableObject {
     /// is tokenized as reusable and persisted to the secure card store, but ONLY once this call
     /// itself observes a final COMPLETED (directly, or through the SDK-managed 3DS). A PENDING
     /// outcome never saves; storage failures are silent — the payment result is unaffected.
+    /// `options` carries the optional gateway parameters for this order — see ``HiPayOrderOptions``.
     public func pay(
         orderId: String,
         amount: String,
@@ -765,7 +818,6 @@ public final class HiPayCardEntryController: ObservableObject {
         shipping: HiPayCustomerInfo? = nil,
         threeDS: HiPayThreeDSMode = .inAppSession,
         saveCard: Bool = false,
-        /// Optional gateway parameters for this order — see ``HiPayOrderOptions``.
         options: HiPayOrderOptions? = nil
     ) async throws -> HiPayTransaction {
         // One-click routing: with a saved card selected, the same host call pays via the
@@ -788,9 +840,9 @@ public final class HiPayCardEntryController: ObservableObject {
                 signature: signature,
                 customer: customer,
                 shipping: shipping,
-                threeDS: threeDS
-            ,
-                options: options)
+                threeDS: threeDS,
+                options: options
+            )
         }
         // The component's save switch and the parameter express the same consent.
         let effectiveSave = saveCard || (oneClickEnabled && saveCardOptIn)
@@ -798,7 +850,7 @@ public final class HiPayCardEntryController: ObservableObject {
         // Lock the fields for the whole flow (incl. the suspended 3DS); reset on every exit (11.14).
         isProcessing = true
         paymentPhase = .tokenizing
-        defer { isProcessing = false; paymentPhase = nil }
+        defer { isProcessing = false; paymentPhase = nil; clearEnteredCard() }
         // Capture the chosen network BEFORE tokenize() clears the component state.
         // Falls back to the LOCALLY DETECTED network, never to a hardcoded brand: while the account
         // ceiling is still pending there is no selected network, and a blind "visa" would declare the
@@ -850,6 +902,7 @@ public final class HiPayCardEntryController: ObservableObject {
     /// reports the stored token as no longer usable, the card is purged from local storage and
     /// `HiPayError.cardNoLongerValid` is thrown — fall back to card entry. A declined payment is
     /// returned as a normal DECLINED transaction.
+    /// `options` carries the optional gateway parameters for this order — see ``HiPayOrderOptions``.
     public func payWithSavedCard(
         _ card: HiPaySavedCard,
         orderId: String,
@@ -863,7 +916,6 @@ public final class HiPayCardEntryController: ObservableObject {
         customer: HiPayCustomerInfo? = nil,
         shipping: HiPayCustomerInfo? = nil,
         threeDS: HiPayThreeDSMode = .inAppSession,
-        /// Optional gateway parameters for this order — see ``HiPayOrderOptions``.
         options: HiPayOrderOptions? = nil
     ) async throws -> HiPayTransaction {
         lastOneClickError = nil // a fresh attempt supersedes the previous outcome
@@ -873,7 +925,7 @@ public final class HiPayCardEntryController: ObservableObject {
         isProcessing = true
         // No tokenization on this path: the stored token goes straight to the order.
         paymentPhase = .creatingOrder
-        defer { isProcessing = false; paymentPhase = nil }
+        defer { isProcessing = false; paymentPhase = nil; clearEnteredCard() }
         let payment = HiPayPayment(configuration: configuration)
         let tx: HiPayTransaction
         do {
@@ -1078,14 +1130,13 @@ public final class HiPayCardEntryController: ObservableObject {
                 cvc: isCvcRequired ? cvc : "",
                 multiUse: multiUse
             )
-            holder = ""
-            cardNumber = ""
-            expiry = ""
+            // The CVV goes the moment it has been used: PCI-DSS forbids retaining it past
+            // authorisation. Its blur flag goes WITH it: `cvcError` is blur-gated, so an emptied
+            // field that still counts as blurred turns red for the whole rest of the flow — the
+            // order call and, on the external-browser path, minutes of 3DS. The other fields go on
+            // the way out, in `clearEnteredCard`.
             cvc = ""
-            networks = []
-            selectedNetwork = nil
-            lastResolvedDigits = nil
-            userDidSelect = false
+            cvcBlurred = false
             return HiPayCardToken(kmpToken)
         } catch {
             throw HiPayError.from(error)
