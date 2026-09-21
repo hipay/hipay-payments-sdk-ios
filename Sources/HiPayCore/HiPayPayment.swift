@@ -10,8 +10,14 @@ public final class HiPayPayment {
 
     private let gateway: GatewayClient
 
-    public init(configuration: HiPayConfiguration) {
-        gateway = GatewayClient(config: configuration.kmpConfig)
+    /// - Parameter recovery: records every order submitted here, keyed on its order id, so an
+    ///   interrupted payment can be found again. The store holds no card token: nothing re-submits.
+    public init(configuration: HiPayConfiguration, recovery: PendingPaymentStore? = nil) {
+        if let recovery {
+            gateway = GatewayClient(config: configuration.kmpConfig, recovery: recovery)
+        } else {
+            gateway = GatewayClient(config: configuration.kmpConfig)
+        }
     }
 
     /// Creates a card order. The five redirect URLs follow the HiPay deep-link
