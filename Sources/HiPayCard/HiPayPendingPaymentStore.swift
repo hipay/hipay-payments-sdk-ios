@@ -1,10 +1,25 @@
 // PCI: the card path — NEVER log here.
 import Foundation
+import Security
 import HiPayCore
 import HiPayPayments
 
-/// Its own flag, armed after a successful sweep, so a transient failure retries on the next launch.
+/// Its own flag, armed only after a confirmed purge, so a transient failure retries on the next launch.
 private let pendingPaymentsLaunchedKey = "com.hipay.pendingpayments.launched"
+
+/// Deletes this namespace's item and reports whether the outcome is known clean.
+///
+/// `HiPayCardSecureStore.clear()` cannot give that signal — it returns no status by design, a Swift
+/// error being unable to cross into Kotlin frames — and arming the flag on an unconfirmed purge is
+/// what would keep a previous install's entries after a reinstall.
+private func purgePendingPayments(namespace: String) -> Bool {
+    let status = SecItemDelete([
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: savedCardsService,
+        kSecAttrAccount as String: namespace,
+    ] as CFDictionary)
+    return status == errSecSuccess || status == errSecItemNotFound
+}
 
 /// Serializes the first-launch check-purge-arm section across concurrent factory calls.
 private let pendingFirstLaunchLock = NSLock()
@@ -13,7 +28,9 @@ private let pendingFirstLaunchLock = NSLock()
 /// its own namespace so the two never see each other.
 ///
 /// Runs a first-launch purge for the same reason the saved-card store does — the Keychain survives an
-/// uninstall, so without it a reinstall would list payments from a previous install.
+/// uninstall, so without it a reinstall would list payments from a previous install. It covers THIS
+/// configuration's namespace, not every one: the saved-card purge deletes by service, which would also
+/// wipe the payer's saved cards when an app upgrades from a version that already armed their flag.
 ///
 /// Call off the main thread: the store does blocking Keychain I/O. Several instances may be used at
 /// once — they share one lock inside the core.
@@ -26,8 +43,7 @@ public func createPendingPaymentStore(
     let raw = HiPayCardSecureStore(namespace: namespace)
     let defaults = UserDefaults.standard
     pendingFirstLaunchLock.lock()
-    if !defaults.bool(forKey: pendingPaymentsLaunchedKey) {
-        raw.clear()
+    if !defaults.bool(forKey: pendingPaymentsLaunchedKey), purgePendingPayments(namespace: namespace) {
         defaults.set(true, forKey: pendingPaymentsLaunchedKey)
     }
     pendingFirstLaunchLock.unlock()
