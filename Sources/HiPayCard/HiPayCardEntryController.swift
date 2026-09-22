@@ -1148,12 +1148,6 @@ public final class HiPayCardEntryController: ObservableObject {
     }
 }
 
-/// One saved-card store per controller, every access (creation included) serialized on a
-/// private queue: the KMP `SecureCardStore` is not thread-safe, and the store contract
-/// mandates off-main access. Not @MainActor on purpose — the queue IS the confinement.
-///
-/// `@unchecked` states that confinement to the compiler, which cannot infer it from a
-/// `DispatchQueue`: without it, handing `self` to the queue's `@Sendable` closure warns.
 /// A transport failure says nothing about what the gateway did — an OS suspension dropping the
 /// connection mid-flight looks exactly like never reaching it. Reporting a failure is the one way this
 /// SDK could make a host conclude "declined" on a payment that was captured, so the outcome is
@@ -1169,8 +1163,8 @@ func indeterminateOnTransportFailure(
     }
 }
 
-/// The recovery store, created on first use and confined to one queue — same reasons as the
-/// saved-card box: the KMP store is not thread-safe and the Keychain opens blocking.
+/// The recovery store, created on first use and confined to one queue so its blocking Keychain I/O
+/// stays off every other thread. Instances sharing the store are safe: the core holds one lock.
 private final class PendingPaymentStoreBox: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.hipay.card.pendingpayments")
     private let configuration: HiPayConfiguration
@@ -1210,6 +1204,12 @@ private final class PendingPaymentStoreBox: @unchecked Sendable {
     }
 }
 
+/// One saved-card store per controller, every access (creation included) serialized on a
+/// private queue: the KMP `SecureCardStore` is not thread-safe, and the store contract
+/// mandates off-main access. Not @MainActor on purpose — the queue IS the confinement.
+///
+/// `@unchecked` states that confinement to the compiler, which cannot infer it from a
+/// `DispatchQueue`: without it, handing `self` to the queue's `@Sendable` closure warns.
 private final class SavedCardStoreBox: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.hipay.card.savedcards")
     private let configuration: HiPayConfiguration

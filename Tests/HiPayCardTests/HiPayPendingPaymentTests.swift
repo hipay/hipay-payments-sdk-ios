@@ -74,14 +74,18 @@ final class HiPayPendingPaymentTests: XCTestCase {
         XCTAssertEqual(seen.first?.orderId, "SW-3")
     }
 
-    func testRefreshingAnOrderWithNoReferenceAnswersFromTheStoreAlone() async throws {
+    func testAnOrderLeftWithoutAReferenceIsListedAsSuch() async throws {
         let store = createPendingPaymentStore(configuration: configuration)
         _ = store.record(orderId: "SW-4", amount: "12.00", currency: "EUR")
 
-        // No reference means nothing to ask the gateway about, which is why this works offline.
-        let snapshot = try await recovery().refreshPayment(orderId: "SW-4")
-        XCTAssertEqual(snapshot?.lastState, .pending)
-        let unknown = try await recovery().refreshPayment(orderId: "NEVER-LAUNCHED")
+        // The host has to be able to tell that nothing links this order to a transaction yet.
+        // Refreshing it is what asks the gateway from the order id, and that needs the network.
+        let listed = try await recovery().unresolvedPayments()
+        XCTAssertEqual(listed.first?.lastState, .pending)
+        XCTAssertFalse(listed.first?.referenceKnown ?? true)
+
+        // An order this device never launched is answered from the store alone, with no network.
+        let unknown = try await recovery().refreshPayment(orderId: "NEVER-LAUNCHED", signature: nil)
         XCTAssertNil(unknown)
     }
 

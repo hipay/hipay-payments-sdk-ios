@@ -15,7 +15,8 @@ private let pendingFirstLaunchLock = NSLock()
 /// Runs a first-launch purge for the same reason the saved-card store does — the Keychain survives an
 /// uninstall, so without it a reinstall would list payments from a previous install.
 ///
-/// Call from a single background thread: the returned store is not thread-safe and does blocking I/O.
+/// Call off the main thread: the store does blocking Keychain I/O. Several instances may be used at
+/// once — they share one lock inside the core.
 public func createPendingPaymentStore(
     configuration: HiPayConfiguration,
     pendingTtlMillis: Int64 = PendingPaymentKt.DEFAULT_PENDING_PAYMENT_TTL_MILLIS,
