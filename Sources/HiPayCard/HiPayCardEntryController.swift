@@ -260,6 +260,8 @@ public final class HiPayCardEntryController: ObservableObject {
     /// Saved-card store, created lazily off the main thread and confined to one
     /// serial queue (the KMP store is not thread-safe).
     private lazy var savedCardStore = SavedCardStoreBox(configuration: configuration)
+    /// Recovery store, created lazily off the main thread and confined to its own serial queue.
+    private lazy var recoveryStore = PendingPaymentStoreBox(configuration: configuration)
     // BIN already resolved against the backend — avoids re-querying per keystroke.
     private var lastResolvedDigits: String?
 
@@ -859,8 +861,8 @@ public final class HiPayCardEntryController: ObservableObject {
             .paymentProductCode ?? "visa"
         let token = try await tokenize(multiUse: effectiveSave)
         paymentPhase = .creatingOrder
-        let payment = HiPayPayment(configuration: configuration)
-        let tx = try await payment.requestCardOrder(
+        let payment = HiPayPayment(configuration: configuration, recovery: await recoveryStore.get())
+        let tx = try await indeterminateOnTransportFailure { try await payment.requestCardOrder(
             orderId: orderId,
             amount: amount,
             currency: currency,
@@ -877,8 +879,9 @@ public final class HiPayCardEntryController: ObservableObject {
             // for it "including the first transaction and the subsequent ones".
             oneClick: effectiveSave,
             options: options
-        )
+        ) }
         let final = try await resolve3DS(tx, redirectScheme: redirectScheme, signature: signature, threeDS: threeDS)
+        await recoveryStore.recordOutcome(orderId: orderId, final)
         if effectiveSave, final.state == .completed {
             // Fail-soft: the payment outcome is already decided; save() reports failure as a
             // boolean, never a thrown error. Record the outcome for the host (popup/confirmation).
@@ -926,10 +929,10 @@ public final class HiPayCardEntryController: ObservableObject {
         // No tokenization on this path: the stored token goes straight to the order.
         paymentPhase = .creatingOrder
         defer { isProcessing = false; paymentPhase = nil; clearEnteredCard() }
-        let payment = HiPayPayment(configuration: configuration)
+        let payment = HiPayPayment(configuration: configuration, recovery: await recoveryStore.get())
         let tx: HiPayTransaction
         do {
-            tx = try await payment.requestCardOrder(
+            tx = try await indeterminateOnTransportFailure { try await payment.requestCardOrder(
                 orderId: orderId,
                 amount: amount,
                 currency: currency,
@@ -944,7 +947,7 @@ public final class HiPayCardEntryController: ObservableObject {
                 shipping: shipping,
                 oneClick: true,
                 options: options
-            )
+            ) }
         } catch let error as HiPayError {
             if case .cardNoLongerValid = error {
                 // Set BEFORE the purge+reload so the error survives the card vanishing
@@ -974,6 +977,7 @@ public final class HiPayCardEntryController: ObservableObject {
             lastOneClickError = HiPayOneClickError(OneClickError(card: card.kmp, reason: .generic))
             throw error
         }
+        await recoveryStore.recordOutcome(orderId: orderId, final)
         if let reason = OneClickErrorKt.oneClickReasonForOutcome(
             finalState: final.state.kmp,
             challenged: challenged,
@@ -1141,6 +1145,62 @@ public final class HiPayCardEntryController: ObservableObject {
         } catch {
             throw HiPayError.from(error)
         }
+    }
+}
+
+/// A transport failure says nothing about what the gateway did — an OS suspension dropping the
+/// connection mid-flight looks exactly like never reaching it. Reporting a failure is the one way this
+/// SDK could make a host conclude "declined" on a payment that was captured, so the outcome is
+/// reported as indeterminate and its recovery entry stays. Mirrors `indeterminateOrRethrow` in the
+/// shared core, which the Kotlin surfaces call.
+func indeterminateOnTransportFailure(
+    _ submit: () async throws -> HiPayTransaction
+) async throws -> HiPayTransaction {
+    do {
+        return try await submit()
+    } catch HiPayError.network {
+        return HiPayTransaction.verificationPending(reference: nil)
+    }
+}
+
+/// The recovery store, created on first use and confined to one queue so its blocking Keychain I/O
+/// stays off every other thread. Instances sharing the store are safe: the core holds one lock.
+private final class PendingPaymentStoreBox: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "com.hipay.card.pendingpayments")
+    private let configuration: HiPayConfiguration
+    private var store: PendingPaymentStore?
+
+    init(configuration: HiPayConfiguration) {
+        self.configuration = configuration
+    }
+
+    func get() async -> PendingPaymentStore {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                let store = self.store ?? createPendingPaymentStore(configuration: self.configuration)
+                self.store = store
+                continuation.resume(returning: store)
+            }
+        }
+    }
+
+    /// Writes back the outcome this instance observed, once 3DS has resolved. Without it the store
+    /// would keep the order's own answer — forwarding for a challenge — and a later list would report
+    /// a payment as unfinished when this instance already saw it settle.
+    func recordOutcome(orderId: String, _ transaction: HiPayTransaction) async {
+        let state: TransactionState
+        switch transaction.state {
+        case .completed: state = .completed
+        case .forwarding: state = .forwarding
+        case .pending: state = .pending
+        case .declined: state = .declined
+        case .error: state = .error
+        }
+        _ = await get().complete(
+            orderId: orderId,
+            reference: transaction.transactionReference,
+            state: state
+        )
     }
 }
 
