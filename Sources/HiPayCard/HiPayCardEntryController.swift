@@ -344,6 +344,10 @@ public final class HiPayCardEntryController: ObservableObject {
 
     private var localeCancel: (() -> Void)?
 
+    /// Raises the funnel's `init` event. Held here rather than in the view so the creation-to-display
+    /// delay is measured from the controller, as it is on the other surfaces.
+    private let monitor: HiPayCheckoutMonitor
+
     public init(
         configuration: HiPayConfiguration,
         allowedNetworks: [HiPayCardNetwork] = [],
@@ -367,9 +371,18 @@ public final class HiPayCardEntryController: ObservableObject {
         self.accountCurrency = currency
         // Re-render the card when the shared HiPaySettings language changes at runtime (no re-init).
         // The shared settings is the KMP type; bridge its change listener to a SwiftUI republish.
+        // Before the listener below: that closure captures self, which Swift refuses while a stored
+        // property is still uninitialized.
+        monitor = HiPayCheckoutMonitor(config: configuration.kmpConfig)
+        monitor.paymentSurfaceCreated()
         localeCancel = configuration.settings?.addLocaleListener { [weak self] _ in
             DispatchQueue.main.async { self?.objectWillChange.send() }
         }
+    }
+
+    /// Raised by the view once it has rendered; the monitor reports only the first render.
+    func reportDisplayed() {
+        monitor.paymentSurfaceDisplayed()
     }
 
     deinit { localeCancel?() }

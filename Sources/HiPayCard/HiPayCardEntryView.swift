@@ -280,6 +280,7 @@ public struct HiPayCardEntryView: View {
         // before the payer has typed a BIN — a brand icon must never be shown for a network the
         // account refuses.
         .task { await controller.loadAccountNetworksIfNeeded() }
+        .onAppear { controller.reportDisplayed() }
         // One-click: load the saved card on appearance (no-op unless opted in — fail-soft).
         .task {
             await controller.refreshSavedCards()
